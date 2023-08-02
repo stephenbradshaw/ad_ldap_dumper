@@ -5,6 +5,8 @@ This tool seeks to dump a similar set of information from Active Directory Domai
 
 Originally written because I wanted something that worked from *nix systems, which worked reliably under more restrictive circumstances than Bloodhound collectors. e.g. if you can talk to the relevant LDAP port on a Domain Controller, and authenticate, this will grab all the useful data, regardless of the state of DNS resolution.
 
+This tool also allows me to very strictly control how and what LDAP queries are executed for environments that have LDAP query based detections in place.
+
 In its current state, this tool writes its output to a single large indented JSON file. Im working on adding the option for output in a BloodHound compatible format, but this is only partly implemented at this point in time.
 
 # Requirements
@@ -17,11 +19,11 @@ You can authenticate using either NTLM (password or pass the hash), simple bind,
 
 Provide the username (`-u USERNAME, --username USERNAME`) in the `DOMAIN\username` format for NTLM or as `username@domain.com` for simple bind. Provide the `LMHASH:NTHASH` hash in place of a password if you wish to use this. `:NTHASH` works too if you dont have a LM hash. you can either specify a password with `-password` or you will get prompted for one if you have attempted an authentication method that requires one.
 
-Use `-k` for Kerberos authentication. On *nix a ccache ticket cache must exist and be referenced by the `KRB5CCNAME` environment variable. Similar to the way Kerberos authentication works for Impacket. You will need to provide the domain controller to connect to (-d option) as a domain name for this to work. This can work without DNS if you use your host file, but it will be finicky when it comes to case. Try and match the servers SPN.  You might also need to specify a realm (e.g. short domain name) and a dc-ip with those options. Best results usually come from using upper case for the realm.
+Use `-k` for Kerberos authentication. On *nix a ccache ticket cache must exist and be referenced by the `KRB5CCNAME` environment variable. Similar to the way Kerberos authentication works for Impacket. I havent tested this on Windows. You will need to provide the domain controller to connect to (-d option) as a domain name for this to work. This can work without DNS if you use your host file, but it will be finicky when it comes to case. Try and match the servers SPN.  You might also need to specify a realm (e.g. short domain name) and a dc-ip with those options. Best results usually come from using upper case for the realm.
 
 The `-no-password` option can be used when attempting to logon as a user with an emtpy password set. You need to specify the username in NTLM format for this to work - the ldap3 module requires that some password be specified for all non anonymous binds, so we set a blank NT hash in this case. It seems to work.
 
-Connect without specifying any authentication details to get some basic server information (and perhaps more if the server is misconfigured).
+Connect without specifying any authentication details for anonymous access to get some basic server information (and perhaps more if the server is misconfigured).
 
 The `ssl` option is available to use SSL for the LDAP connection for servers that require this.
 
