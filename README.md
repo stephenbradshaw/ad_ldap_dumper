@@ -78,7 +78,7 @@ The JSON represents an object with the following high level keys by default (alt
 
 The key names that match that of a category from the previous section contain lists of each collected object of that type. e.g. users in the users key. The schema section contains a dump of the LDAP schema and the meta section contains various information about the operation of the tool.
 
-Even when run against small environments, this is **A LOT** of information. You will likely need to have a good approach to make sense out of this - I use iPython, and will look to update this readme in future with some details about how to make effective use of this in various ways.
+Even when run against small environments, this is **A LOT** of information. You will likely need to have a good approach to make sense out of this - I use iPython, and an overview of how to explore the data was covered in a post on my blog [here](https://thegreycorner.com/2023/08/16/iPython-for-cyber-security.html#exploring-data-by-example-active-directory).
 
 
 # Evasions
