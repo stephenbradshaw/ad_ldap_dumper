@@ -3,9 +3,9 @@ Security focused tool for dumping information from Active Directory via LDAP
 
 This tool seeks to dump a similar set of information from Active Directory Domain Controllers as is retrieved by the LDAP component of Bloodhound collectors such as SharpHound. 
 
-Originally written because I wanted something that worked from *nix systems, which worked reliably under more restrictive circumstances than Bloodhound collectors. e.g. if you can talk to the relevant LDAP port on a Domain Controller, and authenticate, this will grab all the useful data, regardless of the state of DNS resolution.
+Originally written because I wanted something that worked from *nix systems, which worked reliably under more restrictive circumstances than Bloodhound collectors. e.g. if you can talk to the relevant LDAP port on a Domain Controller, this will grab all the useful data you have the permissions to see, regardless of the state of DNS resolution.
 
-This tool also allows me to very strictly control how and what LDAP queries are executed for environments that have LDAP query based detections in place.
+This tool also allows me to very strictly control how and what LDAP queries are executed for environments that have LDAP query based detections/alerting in place.
 
 In its current state, this tool writes its output to a single large indented JSON file. Im working on adding the option for output in a BloodHound compatible format, but this is only partly implemented at this point in time.
 
@@ -42,11 +42,18 @@ The tool collects information on the following categories of objects. The LDAP q
 * users - (&(objectClass=user)(objectCategory=person))
 * info - server.info as available to anonymous binds
 
+All the attributes that the user you connect with can see will be collected for each object. Attribute names are case sensitive, and largely match the LDAP names. 
+
+The exceptions to this naming approach are parsed flag entries, which will have `Flags` appended to the name (e.g. `userAccountControlFlags`) and raw copies of parsed binary types which have `_raw` appended (e.g. `nTSecurityDescriptor_raw`).
+
+There is interpretation or parsing on security descriptor type attributes (`nTSecurityDescriptor` and `msDS-GroupMSAMembership`), date attributes and certain other interesting flag style attributes such as `userAccountControl`, but in general attributes are returned as is.
+
+The `nTSecurityDescriptor` attribute for each object has the Dacls, owner, group and a few of the control fields parsed, and Sids resolved to a friendly name where possible. The Sacl component are currently not being retrieved. The raw version of the attribute is also still returned, as hexlified binary data.
+
 There is an option (`-custom-query <query>`) to run an alternate custom LDAP query as opposed to multiple queries that collect the previous info, or to run only a subset of the built in query categories from the list above (`-methods <comma-seperated-list>`).
 
-The LDAP schema is also queried by default to help with some of the internal lookups. You can choose to avoid the schema lookup or only perform this as required (`-only-schema` or `-no-schema`). Expect the quality of the output to be negatively affected if the schema collection is omitted.
+The LDAP schema is also queried by default to help with some of the internal lookups when parsing ACL entries. You can choose to avoid the schema lookup or only perform this as required (`-only-schema` or `-no-schema`). Expect the quality of the output to be negatively affected if the schema collection is omitted.
 
-Parsed versions of Discretionary Access Control Lists (DACLs) with resolved SIDs are gathered for each object, as well as each other field available to the user performing the query. A few other similar binary fields are also parsed.
 
 # Output
 
