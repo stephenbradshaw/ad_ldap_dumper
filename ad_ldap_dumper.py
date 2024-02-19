@@ -10,6 +10,7 @@ import os
 import tempfile
 import random
 import getpass
+from functools import reduce
 from binascii import hexlify
 from logging import Logger
 from ldap3 import Server, Connection, ALL, Tls, SASL, KERBEROS
@@ -19,7 +20,9 @@ from datetime import datetime, timedelta
 from impacket.uuid import bin_to_string
 
 
-# TODO: Finish implementation of BloodHound format output
+# TODO: Certificate info collection
+# TODO: restrict attributes returned based on an analysis of the schema? There might be a relevant option in the Connection for this..
+# TODO: Investigate GPO Local group Collection??? Is this possible through LDAP or does it require SYSVOL file parsing?
 # TODO: Add option to split output into seperate files based on top level key names?
 # TODO: Optional retrieval and parsing of SACL for admin connections?
 
@@ -143,7 +146,13 @@ OBJECT_TYPES = {
     '5cb41ed0-0e4c-11d0-a286-00aa003049e2': 'contact',
     '19195a5a-6da0-11d0-afd3-00c04fd930c9': 'domain',
     'f30e3bc2-9ff0-11d1-b603-0000f80367c1': 'groupPolicyContainer',
-    '4c164200-20c0-11d0-a768-00aa006e0529': 'User-Account-Restrictions'
+    '4c164200-20c0-11d0-a768-00aa006e0529': 'User-Account-Restrictions',
+    'ea1dddc4-60ff-416e-8cc0-17cee534bce7': 'ms-PKI-Certificate-Name-Flag',
+    'd15ef7d8-f226-46db-ae79-b34e560bd12c': 'ms-PKI-Enrollment-Flag',
+    '0e10c968-78fb-11d2-90d4-00c04f79dc55': 'Certificate-Enrollment',
+    'a05b8cc2-17bc-4802-a710-e7c15ab866a2': 'Certificate-AutoEnrollment',
+    'e5209ca2-3bba-11d2-90cc-00c04fd91ab1': 'PKI-Certificate-Template'
+
 }
 
 # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/564dc969-6db3-49b3-891a-f2f8d0a68a7f
@@ -166,6 +175,8 @@ LOOKUPS = {
     #https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/36565693-b5e4-4f37-b0a8-c1b12138e18e
     'trustType' : {1 : 'DOWNLEVEL', 2: 'UPLEVEL', 3: 'MIT', 4: 'DCE'}
 }
+
+
 
 
 FLAGS = {
@@ -211,6 +222,36 @@ FLAGS = {
         'CROSS_ORGANIZATION_NO_TGT_DELEGATION':0x00000200,
         'CROSS_ORGANIZATION_ENABLE_TGT_DELEGATION': 0x00000800,
         'PIM_TRUST':0x00000400
+    },
+
+    # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Enums/CollectionMethods.cs
+    'collectionMethods': 
+    {
+        'None': 0,
+        'Group' : 1,
+        'LocalAdmin': 1 << 1,
+        'GPOLocalGroup': 1 << 2,
+        'Session' : 1 << 3,
+        'LoggedOn' : 1 << 4,
+        'Trusts' : 1 << 5,
+        'ACL' : 1 << 6,
+        'Container' : 1 << 7,
+        'RDP' : 1 << 8,
+        'ObjectProps' : 1 << 9,
+        'SessionLoop' : 1 << 10,
+        'LoggedOnLoop' : 1 << 11,
+        'DCOM' : 1 << 12,
+        'SPNTargets' : 1 << 13,
+        'PSRemote' : 1 << 14,
+        'UserRights' : 1 << 15,
+        'CARegistry' : 1 << 16,
+        'DCRegistry' : 1 << 17,
+        'CertServices' : 1 << 18,
+        'LocalGroups' :  (1 << 12) | (1 << 8) | (1 << 1) | (1 << 14), # 20738 - DCOM | RDP | LocalAdmin | PSRemote,
+        'ComputerOnly' : 20738 | (1 << 3) | (1 << 15) | (1 << 16) | (1 << 17), # 250122 - LocalGroups | Session | UserRights | CARegistry | DCRegistry,
+        'DCOnly' : (1 << 6) | (1 << 7) | 1 | (1 << 9) | (1 << 5) | (1 << 2) | (1 << 18), # 262885 - ACL | Container | Group | ObjectProps | Trusts | GPOLocalGroup | CertServices,
+        'Default' : 1 | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 9) |  20738 | (1 << 13) | (1 << 7) | (1 << 18),# 291819 - Group | Session | Trusts | ACL | ObjectProps | LocalGroups | SPNTargets | Container | CertServices,
+        'All' : 291819 | (1 << 4) | (1 << 2) | (1 << 15) | (1 << 16) | (1 << 17) #521215 - Default | LoggedOn | GPOLocalGroup | UserRights | CARegistry | DCRegistry
     }
 
 }
@@ -352,7 +393,7 @@ class AdDumper:
                 self.username = 'Kerberos {}'.format(os.environ["KRB5CCNAME"])
         elif not username:
             self.authentication = None
-            self.logger.debug('No username provided, will attempt to perform anonymous bind. Will likely result in limited output.')
+            self.logger.debug('No username provided, if not in import mode will attempt to perform anonymous bind. Will likely result in limited output.')
         elif '\\' in username:
             self.logger.debug('Username provided in NTLM format, will attempt NTLM authentication')
             self.authentication = 'NTLM'
@@ -362,7 +403,7 @@ class AdDumper:
         self.password = password 
         self.no_password = no_password
         if self.no_password and self.username:
-            if self.authentication == 'NTLM': # password to empty NTLM string, ldap3 makes you provide something but this works
+            if self.authentication == 'NTLM': # password to empty NTLM string, ldap3 wont allow you to specify no password but will allow emtpy password hash
                 self.password = 'AAD3B435B51404EEAAD3B435B51404EE:31D6CFE0D16AE931B73C59D7E0C089C0' 
                 self.logger.debug('No password setting specified, attempting NTLM authentication using empty password')
             else: # empty password wont work for SIMPLE binds
@@ -383,7 +424,8 @@ class AdDumper:
         else:
             self.sslprotocol = None
         
-
+        self.bh_parent_map = {}
+        self.bh_gpo_map = {}
         self.post_process_data = True
         self.multi_field = ['dSCorePropagationData', 'objectClass']
         self.datetime_format = '%Y-%m-%d %H:%M:%S.%f %Z %z'
@@ -1047,9 +1089,9 @@ class AdDumper:
                 if AllExtendedRights:
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AllExtendedRights', inherited(dacl)))                
 
-                #TODO WriteAllowedToAct and potentially other edges https://github.com/BloodHoundAD/SharpHoundCommon/blob/main/src/CommonLib/EdgeNames.cs
+                # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Processors/ACLProcessor.cs 
 
-                if 'ADS_RIGHT_DS_WRITE_PROP' in dacl['Privs'] and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags']:
+                if ('ADS_RIGHT_DS_WRITE_PROP' in dacl['Privs'] or GenericWrite) and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags']:
                     if objectClass.lower() == 'group' and dacl['ControlObjectType'] == 'Member':
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddMember', inherited(dacl)))
                     elif objectClass.lower() == 'computer' and dacl['ControlObjectType'] == 'ms-DS-Allowed-To-Act-On-Behalf-Of-Other-Identity':
@@ -1060,6 +1102,13 @@ class AdDumper:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddKeyCredentialLink', inherited(dacl)))
                     elif objectClass.lower() == 'user' and dacl['ControlObjectType'] == 'Service-Principal-Name':
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WriteSPN', inherited(dacl)))
+                    # once certificate stuff collected... PKI-Certificate-Template
+                    elif objectClass.lower() == 'pki-certificate-template' and dacl['ControlObjectType'] == 'ms-PKI-Enrollment-Flag':
+                        out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WritePKIEnrollmentFlag', inherited(dacl)))
+                    elif objectClass.lower() == 'pki-certificate-template' and dacl['ControlObjectType'] == 'ms-PKI-Certificate-Name-Flag':
+                        out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WritePKINameFlag', inherited(dacl)))
+
+
 
                 if ('ADS_RIGHT_DS_SELF' in dacl['Privs'] and objectClass.lower() == 'group' and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags']
                 and dacl['ControlObjectType'] == 'Member'):
@@ -1120,6 +1169,37 @@ class AdDumper:
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AllExtendedRights', inherited(dacl)))    
 
         return out
+    
+    def _get_entry_id(self, entry):        
+        sid = self._fp(entry, 'objectSid')
+        return sid if sid else self._fp(entry, 'objectGUID').upper().translate({ord('{'):None,ord('}'):None})
+
+
+    def _get_container(self, entry):
+        if self.bh_parent_map:
+            pc = ','.join(self._fp(entry, 'distinguishedName').split(',')[1:])
+            if pc in self.bh_parent_map:
+                return self.bh_parent_map[pc]
+            elif (pc.startswith('CN=Builtin,DC=')):
+                return {'ObjectIdentifier': 'S-1-5-32', 'ObjectType': 'Base'} 
+            else:
+                self.logger.debug('No container found for {}'.format(self._fp(entry, 'distinguishedName')))
+                return None
+        else:
+            return None
+
+    def _get_gplink(self, entry):
+        try:
+            if 'gPLink' in entry:
+                gplinks = [a.split(';') for a in self._fp(entry, 'gPLink').upper().replace('[LDAP://', '').split(']')[:-1]]
+                return [{'GUID': self.bh_gpo_map[a[0]], 'IsEnforced': bool(a[1])}  for a in gplinks]
+            else:
+                return []
+        except:
+            self.logger.debug('Error parsing GPLInk in {}'.format(self._fp(entry, 'distinguishedName')))
+            return [] #[{'GUID': '', 'IsEnforced': False}]
+
+
 
     def bloodhound_map_common(self, entry):
         common_properties = {
@@ -1128,20 +1208,23 @@ class AdDumper:
             'displayname' : self._fp(entry,'displayName', '').upper(),
             'domainsid' : self.get_domain_sid(entry['objectSid']) if 'objectSid' in entry else '',
             'description' : self._fp(entry, 'description', [None])[0], 
-            'highvalue': self._hv(entry['objectSid']) if 'objectSid' in entry else False, # TODO not sure if this is correct, verify
+            'highvalue': self._hv(entry['objectSid']) if 'objectSid' in entry else False, # not sure if this is correct, but this is no longer included in v6 so will leave it as is
+            'isaclprotected': entry['nTSecurityDescriptor']['IsACLProtected']
         }
         return {
             'Properties': {**{a: self._fp(entry, a) for a in BH_COMMON_PROPERTIES}, **common_properties},
             'IsACLProtected': entry['nTSecurityDescriptor']['IsACLProtected'], # Protected DACL flag
             'IsDeleted': self._fp(entry, 'isDeleted', False),
-            'ObjectIdentifier': self._fp(entry, 'objectSid'),
+            'ObjectIdentifier': self._get_entry_id(entry),
+            'ContainedBy':  self._get_container(entry),
             'Aces': self.convert_bloodhound_acl(entry)
         }
 
+
     def bloodhound_map_container(self, entry):
-        #TODO filter based on ',CN=DomainUpdates,' not in a['distinguishedName'] and ',CN=Policies,' not in a['distinguishedName']
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_CONTAINER_KEYS}}
         out['Properties'].update({a: self._fp(entry, a) for a in BH_CONTAINER_PROPERTIES})
+        out['ChildObjects'] = []
         unique_properties = {
         }
         out['Properties'].update(unique_properties)
@@ -1153,8 +1236,8 @@ class AdDumper:
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid')), self._fp(entry, 'primaryGroupID'))
         out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', [])
         out['AllowedToDelegate'] = self._fp(entry, 'msDS-AllowedToDelegateTo', [])
-        out['Status'] = None #? https://github.com/BloodHoundAD/SharpHoundCommon/blob/main/src/CommonLib/OutputTypes/Computer.cs#L24
-        out['AllowedToAct'] = [] #?
+        out['Status'] = None # can you connect to computer, probably not suitable for this tool but if not null format is { "Connectable": false, "Error": "PwdLastSetOutOfRange" }
+        out['AllowedToAct'] = self._fp(entry, 'msDS-AllowedToActOnBehalfOfOtherIdentity', []) # TODO: not sure output will be right here 3f78c3e5-f79a-46bd-a0b8-9d18116ddc79
         for key in ['Sessions', 'PrivilegedSessions', 'RegistrySessions', 'LocalAdmins', 'RemoteDesktopUsers', 'DcomUsers', 'PSRemoteUsers']:
             out[key] = {'Results': [],'Collected': False, 'FailureReason': None}
 
@@ -1178,11 +1261,12 @@ class AdDumper:
     def bloodhound_map_domain(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_DOMAIN_KEYS}}
-        out['ChildObjects'] = [ {'ObjectIdentifier': '', 'ObjectType': ''} ] # TODO GUID and Object or Container
-        out['GPOChanges'] = {'LocalAdmins': [], 'RemoteDesktopUsers': [], 'DcomUsers': [], 'PSRemoteUsers': [], 'AffectedComputers': []} # TODO
-        out['Links'] = [{'IsEnforced': False, 'GUID': ''}] # TODO - linked GPOs, lists GUID of GPO
-        out['Trusts'] = [] # TODO https://github.com/BloodHoundAD/SharpHoundCommon/blob/main/src/CommonLib/OutputTypes/DomainTrust.cs
+        out['ChildObjects'] = [] # does not appear to be populated in v6 collectors, but format was this: {'ObjectIdentifier': '', 'ObjectType': ''}
+        out['GPOChanges'] = {'LocalAdmins': [], 'RemoteDesktopUsers': [], 'DcomUsers': [], 'PSRemoteUsers': [], 'AffectedComputers': []} # requires GPO disk parsing (?)
+        out['Links'] = self._get_gplink(entry) # [{'IsEnforced': False, 'GUID': ''}] 
+        out['Trusts'] = [] 
         out['Properties'].update({a: self._fp(entry, a) for a in BH_DOMAIN_PROPERTIES})
+        out['ChildObjects'] = []
         unique_properties = {
             'domainsid': self._fp(entry, 'objectSid'),
             'domain': domainName,
@@ -1207,7 +1291,6 @@ class AdDumper:
     def bloodhound_map_gpo(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_GPO_KEYS}}
-        out['ObjectIdentifier'] = self._fp(entry, 'objectGUID').rstrip('}').lstrip('{').upper()
         out['Properties'].update({a: self._fp(entry, a) for a in BH_GPO_PROPERTIES})
         unique_properties = {
             'name' : '{}@{}'.format(self._fp(entry, 'displayName'), domainName),
@@ -1220,8 +1303,10 @@ class AdDumper:
     def bloodhound_map_ou(self, entry):
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_OU_KEYS}}
         out['Properties'].update({a: self._fp(entry, a) for a in BH_OU_PROPERTIES})
+        out['ChildObjects'] = []
+        out['GPOChanges'] = {'LocalAdmins': [], 'RemoteDesktopUsers': [], 'DcomUsers': [], 'PSRemoteUsers': [], 'AffectedComputers': []}
+        out['Links'] = self._get_gplink(entry) # [{'IsEnforced': False, 'GUID': ''}] 
         unique_properties = {
-
         }
         out['Properties'].update(unique_properties)
         return out
@@ -1232,8 +1317,7 @@ class AdDumper:
         out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', [])
         out['AllowedToDelegate'] = self._fp(entry, 'msDS-AllowedToDelegateTo', [])
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid', '')), self._fp(entry, 'primaryGroupID'))
-        out['SPNTargets'] = [] # TODO - servicePrincipalName?
-
+        out['SPNTargets'] = [] # TODO, renamed to SPNPrivilege - https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/SPNPrivilege.cs
         out['Properties'].update({a: self._fp(entry, a) for a in BH_USER_PROPERTIES})
         unique_properties = {
             'lastlogontimestamp': self._fp(entry, 'lastLogontimeStamp', -1),
@@ -1258,22 +1342,51 @@ class AdDumper:
         out['Properties'].update(unique_properties)
         
         return out
+    
+    def bloodhound_map_trusted_domains(self, entry):
+        return {
+            'TargetDomainName': self._fp(entry, 'trustPartner').upper(), 
+            'TargetDomainSid': self._fp(entry, 'securityIdentifier'), 
+            'IsTransitive' : self._fp(entry, 'transitive'),
+            'TrustDirection': self._fp(entry, 'trustDirection'),
+            'TrustType': self._fp(entry, 'trustType'),
+            'SidFilteringEnabled' : self._fp(entry, 'sidFiltering')
+        }
+
+    def _get_containter_def(self, entry):
+        oc_to_name = lambda x : 'Container' if 'Container' in x else 'Domain' if 'Domain' in x else 'OU'
+        return {'ObjectIdentifier': self._get_entry_id(entry), 'ObjectType': oc_to_name(self._fp(entry, 'objectCategory')) }
 
 
     def bloodhound_convert(self, dump, filename_base=''):
         '''Takes in complete json dump and writes output to individual bloodhound files'''
         self.logger.info('Processing data into Bloodhound format')
         timestamp = self.generate_timestamp()
-        for key in ['containers', 'computers', 'domains', 'gpos', 'groups', 'ous', 'users']:
+        methods_included = ['ACL', 'ObjectProps', 'Trusts', 'UserRights'] 
+        for key in ['containers', 'groups']:
+            if key in dump:
+                methods_included.append(key.capitalize().rstrip('s'))
+        methods = reduce(lambda x, y: x | y,[FLAGS['collectionMethods'][a] for a in methods_included])
+
+        for key in ['domains', 'containers', 'ous']:
+            mapentry = {self._fp(a, 'distinguishedName'): self._get_containter_def(a) for a in dump[key]}
+            self.bh_parent_map = {**self.bh_parent_map, **mapentry}
+
+        if 'gpos' in dump:
+            for entry in dump['gpos']:
+                self.bh_gpo_map[self._fp(entry, 'distinguishedName').upper()] = self._fp(entry, 'objectGUID').upper().translate({ord('{'):None,ord('}'):None})
+        
+        for key in ['containers', 'computers', 'domains', 'gpos', 'groups', 'ous', 'users']: 
             if key in dump:
                 self.logger.info('Generating Bloodhound {} file'.format(key))
                 processed = {}
                 processed['data'] = [getattr(self, 'bloodhound_map_{}'.format(key.rstrip('s')))(a) for a in dump[key]]
-                processed['meta'] = {'methods' : 0, 'type' : key, 'count': len(dump[key]), 'version' : 5} # not sure how to calc methods
+                if key == 'domains' and 'trusted_domains' in dump:
+                    processed['data'][0]['Trusts'] = [self.bloodhound_map_trusted_domains(a) for a in dump['trusted_domains']]
+                processed['meta'] = {'methods' : methods, 'type' : key, 'count': len(dump[key]), 'version' : 6} # methods
                 fn = '{}{}_{}.json'.format(filename_base + '_' if filename_base else '', timestamp, key)
                 self.logger.debug('Writing Bloodhound {} output to: {}'.format(key, fn))
                 open(fn, 'w').write(json.dumps(processed, indent=4))
-
 
 
     def import_dump(self, dumpfile):
@@ -1288,7 +1401,7 @@ class AdDumper:
             if additional:
                 self.object_types.update(additional)
         if 'meta' in dump:
-            self.output_timestamp = dump['meta']['timestamp']
+            self.output_timestamp = dump['meta']['end_time']
         for object in ['users', 'groups', 'computers']:
             self.update_sidlt(dump[object])
         self.logger.info('Import complete')
@@ -1298,11 +1411,9 @@ class AdDumper:
     # allow building sid lookup table into already completed json dump files
     def export_dump(self, dumpfile):
         out = self.import_dump(dumpfile)
-        out['meta'] = {'timestamp' : self.output_timestamp, 'methods' : list([a for a in out.keys() if a not in ['schema', 'meta']]), 'sid_lookup' : self.sidLT}
+        out['meta'] = {'end_time' : self.output_timestamp, 'methods' : list([a for a in out.keys() if a not in ['schema', 'meta']]), 'sid_lookup' : self.sidLT}
         return out
         
-
-# TODO: restrict attributes returned based on an analysis of the schema? There might be a relevant option in the Connection for this..
 
 
 def check_ipython():
