@@ -302,6 +302,7 @@ BH_USER_KEYS = [
 ]
 
 BH_COMMON_PROPERTIES = [
+    'collected',
     'description',
     'distinguishedname',
     'domain',
@@ -426,6 +427,7 @@ class AdDumper:
         
         self.bh_parent_map = {}
         self.bh_gpo_map = {}
+        self.bh_core_domain = ''
         self.post_process_data = True
         self.multi_field = ['dSCorePropagationData', 'objectClass']
         self.datetime_format = '%Y-%m-%d %H:%M:%S.%f %Z %z'
@@ -438,6 +440,14 @@ class AdDumper:
         self.domainLT = {}
         self.domainLTNB = {}
         self.convert_binary = True
+
+        # impacket has set values for these masks, these are how they are represented when read from AD
+        self.am_overrides = {
+            'GENERIC_READ' : 0x00020094,
+            'GENERIC_WRITE': 0x00020028,
+            'GENERIC_EXECUTE':0x00020004,
+            'GENERIC_ALL': 0x000F01FF
+        }
 
         self.ace_flags = self.get_ace_flag_constants()
         self.access_masks = self.get_access_mask_constants()
@@ -522,7 +532,8 @@ class AdDumper:
 
     def get_access_mask_constants(self):
         access_mask = {a:ACCESS_MASK.__dict__[a] for a in ACCESS_MASK.__dict__ if a == a.upper() }
-        access_mask.update({a:ACCESS_ALLOWED_OBJECT_ACE.__dict__[a] for a in ACCESS_ALLOWED_OBJECT_ACE.__dict__ if a.startswith('ADS_')})
+        access_mask.update({a:ACCESS_ALLOWED_OBJECT_ACE.__dict__[a] for a in ACCESS_ALLOWED_OBJECT_ACE.__dict__ if a.startswith('ADS_')})   
+        access_mask.update(self.am_overrides)
         return access_mask
 
 
@@ -690,7 +701,7 @@ class AdDumper:
         return out
 
     def get_class(self, entry):
-        return entry['objectCategory'].split(',')[0].split('=')[-1].replace('Person', 'User')
+        return entry['objectCategory'].split(',')[0].split('=')[-1].replace('Person', 'User').replace('-DNS', '')
 
     def update_sidlt(self, data):
         self.sidLT.update({a['objectSid']: [a['sAMAccountName'], self.get_class(a)] for a in data if 'objectSid' in a and 'sAMAccountName' in a and 'objectCategory' in a})
@@ -1007,7 +1018,8 @@ class AdDumper:
         owner = sd['OwnerSid']
         objectClass = self.get_class(entry)
         out = []
-        build_hb_acl = lambda w,x,y,z: {'PrincipalSID': w, 'PrincipalType': x, 'RightName': y, 'IsInherited': z}
+        tbs = lambda x : x if x.startswith('S-1-5-21-') else '{}-{}'.format(self.bh_core_domain, x)
+        build_hb_acl = lambda w,x,y,z: {'PrincipalSID': tbs(w), 'PrincipalType': x, 'RightName': y, 'IsInherited': z}
         inherited = lambda x: 'INHERITED_ACE' in x['Flags']
         creator_system_sids = ['S-1-3-0', 'S-1-5-18', 'S-1-5-10'] # creater owner and local system
         allowed_dacls = ['ACCESS_ALLOWED_OBJECT_ACE', 'ACCESS_ALLOWED_ACE'] # ace types we care about
@@ -1039,12 +1051,12 @@ class AdDumper:
 
             if dacl['Type'] == 'ACCESS_ALLOWED_OBJECT_ACE':
                 # inherited ace with the InheritableObjectType not matching this object type
-                if 'INHERITED_ACE' in dacl['Flags'] and 'ACE_INHERITED_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags'] and dacl['InheritableObjectType'] != objectClass:
+                if 'INHERITED_ACE' in dacl['Flags'] and 'ACE_INHERITED_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl.get('InheritableObjectType', '') != objectClass:
                     continue
 
                 if 'GENERIC_ALL' in dacl['Privs']:
                     # check for laps
-                    if (objectClass.lower() == 'computer' and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags'] and 'ms-Mcs-AdmPwdExpirationTime' in entry 
+                    if (objectClass.lower() == 'computer' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and 'ms-Mcs-AdmPwdExpirationTime' in entry 
                     and dacl['ControlObjectType'].lower() == 'ms-mcs-admpwd'):
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'ReadLAPSPassword', inherited(dacl)))
                     else:
@@ -1056,7 +1068,7 @@ class AdDumper:
                      GenericWrite = True
 
                 if ('ADS_RIGHT_DS_WRITE_PROP' in dacl['Privs'] and objectClass.lower() in ['user', 'group', 'computer', 'gpo'] 
-                and 'ACE_OBJECT_TYPE_PRESENT' not in dacl['Ace_Data_Flags']):
+                and 'ACE_OBJECT_TYPE_PRESENT' not in dacl.get('Ace_Data_Flags', [])):
                     GenericWrite = True
                 
                 # WriteDacl
@@ -1067,11 +1079,12 @@ class AdDumper:
                 if 'WRITE_OWNER' in dacl['Privs']:
                     WriteOwner = True
                 
-                # AllExtendedRights
+                # AllExtendedRights - TODO: also apply to cert templates
                 if ('ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() in ['user', 'domain', 'computer']
-                and 'ACE_OBJECT_TYPE_PRESENT' not in dacl['Ace_Data_Flags']):
+                and ('ACE_OBJECT_TYPE_PRESENT' not in dacl.get('Ace_Data_Flags', []))):
                     AllExtendedRights = True
-                
+               
+               
                 # WriteDacl, WriteOwner, GenericWrite, AllExtendedRights - combine this combo into GenericAll if also DELETE
                 #https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/990fb975-ab31-4bc1-8b75-5da132cd4584
                 # GenericAll = The right to create or delete child objects, delete a subtree, read and write properties, examine child objects
@@ -1110,20 +1123,20 @@ class AdDumper:
 
 
 
-                if ('ADS_RIGHT_DS_SELF' in dacl['Privs'] and objectClass.lower() == 'group' and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags']
+                if ('ADS_RIGHT_DS_SELF' in dacl['Privs'] and objectClass.lower() == 'group' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', [])
                 and dacl['ControlObjectType'] == 'Member'):
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddSelf', inherited(dacl)))
                     
                 if ('ADS_RIGHT_DS_READ_PROP' in dacl['Privs'] and objectClass.lower() == 'computer' and 
-                'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags'] and 'ms-Mcs-AdmPwdExpirationTime' in entry and 
+                'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and 'ms-Mcs-AdmPwdExpirationTime' in entry and 
                 dacl['ControlObjectType'].lower() == 'ms-mcs-admpwd'):
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'ReadLAPSPassword', inherited(dacl)))
 
                 if 'ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs']:
-                    if objectClass.lower() == 'user' and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags'] and dacl['ControlObjectType'] == 'User-Force-Change-Password':
+                    if objectClass.lower() == 'user' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] == 'User-Force-Change-Password':
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'ForceChangePassword', inherited(dacl)))
 
-                    if objectClass.lower() == 'domain' and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags']:
+                    if objectClass.lower() == 'domain' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []):
                         if dacl['ControlObjectType'] == 'DS-Replication-Get-Changes':
                             out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GetChanges', inherited(dacl)))
                         if dacl['ControlObjectType'] == 'DS-Replication-Get-Changes-All':
@@ -1192,7 +1205,7 @@ class AdDumper:
         try:
             if 'gPLink' in entry:
                 gplinks = [a.split(';') for a in self._fp(entry, 'gPLink').upper().replace('[LDAP://', '').split(']')[:-1]]
-                return [{'GUID': self.bh_gpo_map[a[0]], 'IsEnforced': bool(a[1])}  for a in gplinks]
+                return [{'GUID': self.bh_gpo_map[a[0]], 'IsEnforced': bool(int(a[1])) if a[1].isdigit() else False} for a in gplinks]
             else:
                 return []
         except:
@@ -1209,7 +1222,8 @@ class AdDumper:
             'domainsid' : self.get_domain_sid(entry['objectSid']) if 'objectSid' in entry else '',
             'description' : self._fp(entry, 'description', [None])[0], 
             'highvalue': self._hv(entry['objectSid']) if 'objectSid' in entry else False, # not sure if this is correct, but this is no longer included in v6 so will leave it as is
-            'isaclprotected': entry['nTSecurityDescriptor']['IsACLProtected']
+            'isaclprotected': entry['nTSecurityDescriptor']['IsACLProtected'],
+            'collected': True
         }
         return {
             'Properties': {**{a: self._fp(entry, a) for a in BH_COMMON_PROPERTIES}, **common_properties},
@@ -1257,6 +1271,7 @@ class AdDumper:
         out['Properties'].update(unique_properties)
         return out
 
+     #IsDeleted
     #https://github.com/BloodHoundAD/SharpHoundCommon/blob/main/src/CommonLib/OutputTypes/Domain.cs
     def bloodhound_map_domain(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
@@ -1273,7 +1288,7 @@ class AdDumper:
             'name' : domainName,
             'functionallevel': (FUNCTIONAL_LEVELS[self._fp(entry,'msDS-Behavior-Version')] 
                 if self._fp(entry,'msDS-Behavior-Version') in FUNCTIONAL_LEVELS else self._fp(entry,'msDS-Behavior-Version')),
-            'highvalue': True
+            'whencreated' : ''
         }
         out['Properties'].update(unique_properties)
         del out['Properties']['displayname']
@@ -1317,7 +1332,7 @@ class AdDumper:
         out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', [])
         out['AllowedToDelegate'] = self._fp(entry, 'msDS-AllowedToDelegateTo', [])
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid', '')), self._fp(entry, 'primaryGroupID'))
-        out['SPNTargets'] = [] # TODO, renamed to SPNPrivilege - https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/SPNPrivilege.cs
+        out['SPNPrivilege'] = [] # TODO, renamed to SPNPrivilege - https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/SPNPrivilege.cs
         out['Properties'].update({a: self._fp(entry, a) for a in BH_USER_PROPERTIES})
         unique_properties = {
             'lastlogontimestamp': self._fp(entry, 'lastLogontimeStamp', -1),
@@ -1335,6 +1350,7 @@ class AdDumper:
             'hasspn': True if self._fp(entry, 'servicePrincipalName', []) else False,
             'unixpassword': self._fp(entry,'unixUserPassword'),
             'unicodepassword': self._fp(entry,'unicodePwd'),
+            'userpassword': self._fp(entry,'userPassword'),
             'sfupassword': self._fp(entry,'msSFU30Password'),
             'logonscript': self._fp(entry,'scriptPath'),
             'sidhistory' : self._fp(entry,'sidHistory', [])
@@ -1367,7 +1383,11 @@ class AdDumper:
             if key in dump:
                 methods_included.append(key.capitalize().rstrip('s'))
         methods = reduce(lambda x, y: x | y,[FLAGS['collectionMethods'][a] for a in methods_included])
-
+        if 'domains' in dump:
+            self.bh_core_domain = '.'.join([a.replace('DC=', '').upper() for a in self._fp(dump['domains'][0], 'distinguishedName', '').split(',') if a.startswith('DC=')])
+        else:
+            self.logger.info('No domain info in dump file, this conversion is probably going to fail...')
+        
         for key in ['domains', 'containers', 'ous']:
             mapentry = {self._fp(a, 'distinguishedName'): self._get_containter_def(a) for a in dump[key]}
             self.bh_parent_map = {**self.bh_parent_map, **mapentry}
