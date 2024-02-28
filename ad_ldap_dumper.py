@@ -11,13 +11,14 @@ import tempfile
 import random
 import getpass
 from functools import reduce
-from binascii import hexlify
+from binascii import hexlify, unhexlify
 from logging import Logger
 from ldap3 import Server, Connection, ALL, Tls, SASL, KERBEROS
 from ldap3.utils.ciDict import CaseInsensitiveDict
 from impacket.ldap.ldaptypes import ACE, ACCESS_ALLOWED_OBJECT_ACE, ACCESS_MASK, LDAP_SID, SR_SECURITY_DESCRIPTOR
 from datetime import datetime, timedelta
 from impacket.uuid import bin_to_string
+from OpenSSL.crypto import load_certificate, FILETYPE_ASN1
 
 
 # TODO: Certificate info collection
@@ -256,6 +257,19 @@ FLAGS = {
 
 }
 
+
+BH_CERTAUTHORITY_KEYS = []
+
+BH_AIACAS_KEYS = []
+
+BH_NTAUTHSTORES_KEYS = []
+
+BH_ROOTCA_KEYS = []
+
+BH_ENTERPRISECA_KEYS = []
+
+BH_CERTTEMPLATE_KEYS = []
+
 BH_CONTAINER_KEYS = [
     'ChildObjects'
 ]
@@ -302,14 +316,43 @@ BH_USER_KEYS = [
 ]
 
 BH_COMMON_PROPERTIES = [
-    'collected',
+    #'collected',
     'description',
     'distinguishedname',
     'domain',
     'domainsid',
-    'highvalue',
+    #'highvalue',
     'name',
     'whencreated'
+]
+
+BH_AIACAS_PROPERTIES = [
+    "crosscertificatepair",
+    "hascrosscertificatepair",
+    "certthumbprint",
+    "certthumbprint",
+    "certname",
+    "certchain",
+    "hasbasicconstraints",
+    "basicconstraintpathlength"
+]
+
+BH_NTAUTHSTORES_PROPERTIES = []
+
+BH_ROOTCA_PROPERTIES = []
+
+BH_ENTERPRISECA_PROPERTIES = []
+
+BH_CERTTEMPLATE_PROPERTIES = []
+
+
+BH_CERTAUTHORITY_PROPERTIES = [
+    "isaclprotected",
+    "certthumbprint",
+    "certname",
+    "certchain",
+    "hasbasicconstraints",
+    "basicconstraintpathlength"
 ]
 
 BH_CONTAINER_PROPERTIES = []
@@ -376,7 +419,7 @@ BH_USER_PROPERTIES = [
 
 class AdDumper:
 
-    def __init__(self, host=None, target_ip=None, username=None, password=None, ssl=False, sslprotocol=None, port=None, delay=0, jitter=0, paged_size=500, logger=Logger, raw=False, kerberos=False, no_password=False, query_config=None):
+    def __init__(self, host=None, target_ip=None, username=None, password=None, ssl=False, sslprotocol=None, port=None, delay=0, jitter=0, paged_size=500, logger=Logger, raw=False, kerberos=False, no_password=False, query_config=None, import_mode=False):
         self.logger = logger
         self.host = host
         self.kerberos = kerberos
@@ -394,7 +437,8 @@ class AdDumper:
                 self.username = 'Kerberos {}'.format(os.environ["KRB5CCNAME"])
         elif not username:
             self.authentication = None
-            self.logger.debug('No username provided, if not in import mode will attempt to perform anonymous bind. Will likely result in limited output.')
+            if not import_mode:
+                self.logger.debug('No username provided, will attempt to perform anonymous bind. Will likely result in limited output.')
         elif '\\' in username:
             self.logger.debug('Username provided in NTLM format, will attempt NTLM authentication')
             self.authentication = 'NTLM'
@@ -427,6 +471,7 @@ class AdDumper:
         
         self.bh_parent_map = {}
         self.bh_gpo_map = {}
+        self.bh_cert_temp_map = {}
         self.bh_core_domain = ''
         self.post_process_data = True
         self.multi_field = ['dSCorePropagationData', 'objectClass']
@@ -441,7 +486,8 @@ class AdDumper:
         self.domainLTNB = {}
         self.convert_binary = True
 
-        # impacket has set values for these masks, these are how they are represented when read from AD
+        # impacket LDAP access mask structures have values for set (not read) operations for these masks, so we override
+        # https://learn.microsoft.com/en-us/dotnet/api/system.directoryservices.activedirectoryrights?view=netframework-4.7.2
         self.am_overrides = {
             'GENERIC_READ' : 0x00020094,
             'GENERIC_WRITE': 0x00020028,
@@ -456,6 +502,9 @@ class AdDumper:
         self.schema = {}
         self.output_timestamp = None
         self.start_time = None 
+
+        self.methods = []
+        self.config_containers_collected = False
 
         # start with well known SIDS https://learn.microsoft.com/en-us/windows/win32/secauthz/well-known-sids
         self.sidLT = {
@@ -752,6 +801,56 @@ class AdDumper:
         return gen
 
 
+    def _query_certcontainers(self, attributes=ldap3.ALL_ATTRIBUTES):
+        data = []
+        if not self.config_containers_collected:
+            self.logger.info('Querying configuration conatiner objects from LDAP')
+            if 'containers' in self.methods:
+                query = '(objectClass=container)'
+                if self.config and 'containers' in self.config:
+                    query = self.config['containers']
+                gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
+                data = self.parse_records(gen)
+                self.config_containers_collected = True
+        return data
+
+
+
+    def query_certauthorities(self, attributes=ldap3.ALL_ATTRIBUTES):
+        self.logger.info('Querying certauthority objects from LDAP')
+        query = '(objectClass=certificationAuthority)'
+        if self.config and 'certauthorities' in self.config:
+            query = self.config['certauthorities']
+            self.logger.debug('Query override from config file: {}'.format(query))
+        # forcing base to CN=Configuration is the only way Ive been able to get PKI related items to work, not sure if theres a betetr way
+        gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
+        data = self.parse_records(gen)
+        return data
+
+
+    def query_certenrollservices(self, attributes=ldap3.ALL_ATTRIBUTES):
+        self.logger.info('Querying certenrollservice objects from LDAP')
+        query = '(objectClass=pKIEnrollmentService)'
+        if self.config and 'certenrollservice' in self.config:
+            query = self.config['certenrollservice']
+            self.logger.debug('Query override from config file: {}'.format(query))
+        gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
+        data = self.parse_records(gen)
+        gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
+        data = self.parse_records(gen)
+        return data
+
+
+    def query_certtemplates(self, attributes=ldap3.ALL_ATTRIBUTES):
+        self.logger.info('Querying certtemplate objects from LDAP')
+        query = '(objectClass=pKICertificateTemplate)'
+        if self.config and 'certtemplates' in self.config:
+            query = self.config['certtemplates']
+            self.logger.debug('Query override from config file: {}'.format(query))
+        gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
+        data = self.parse_records(gen)
+        return data
+
     def query_containers(self, attributes=ldap3.ALL_ATTRIBUTES):
         self.logger.info('Querying container objects from LDAP')
         query = '(objectClass=container)'
@@ -905,6 +1004,7 @@ class AdDumper:
                     if method not in valid_methods:
                         raise Exception('Invalid query method of {} supplied.\nValid methods are: '.format(method, ', '.join(valid_methods)))
 
+            self.methods = methods
             for method in methods:
                 if self.delay:
                     mydelay = self.delay
@@ -914,7 +1014,13 @@ class AdDumper:
                         self.logger.debug('Adding {} seconds of jitter to delay'.format(myjit))
                     self.logger.info('Sleeping for {} seconds between queries as per configured setting'.format(mydelay))
                     time.sleep(mydelay)
-                out[method] = getattr(self, 'query_{}'.format(method))()
+                if not method in out:
+                    out[method] = []
+                out[method] += getattr(self, 'query_{}'.format(method))()
+                if method.startswith('cert') and len(out[method]) > 0:
+                    if not 'containers' in out:
+                        out['containers'] = []
+                    out['containers'] += self._query_certcontainers()
 
         out['meta'] = {'start_time': self.start_time, 'end_time' : self.generate_timestamp(), 'username': self.username, 'server': self.host, 'methods' : list([a for a in out.keys() if a != 'schema']), 'sid_lookup' : self.sidLT}
         self.logger.info('Data collection complete, processing...')
@@ -1103,6 +1209,8 @@ class AdDumper:
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AllExtendedRights', inherited(dacl)))                
 
                 # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Processors/ACLProcessor.cs 
+                    
+                # ManageCA, ManageCertificates, Enroll
 
                 if ('ADS_RIGHT_DS_WRITE_PROP' in dacl['Privs'] or GenericWrite) and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags']:
                     if objectClass.lower() == 'group' and dacl['ControlObjectType'] == 'Member':
@@ -1120,7 +1228,6 @@ class AdDumper:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WritePKIEnrollmentFlag', inherited(dacl)))
                     elif objectClass.lower() == 'pki-certificate-template' and dacl['ControlObjectType'] == 'ms-PKI-Certificate-Name-Flag':
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WritePKINameFlag', inherited(dacl)))
-
 
 
                 if ('ADS_RIGHT_DS_SELF' in dacl['Privs'] and objectClass.lower() == 'group' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', [])
@@ -1143,6 +1250,14 @@ class AdDumper:
                             out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GetChangesAll', inherited(dacl)))
                         if dacl['ControlObjectType'] == 'DS-Replication-Get-Changes-In-Filtered-Set':
                             out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GetChangesInFilteredSet', inherited(dacl)))
+                    
+                    if objectClass.lower() == 'pki-enrollment-service' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] == 'Certificate-Enrollment':
+                        out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'Enroll', inherited(dacl)))
+
+                    if objectClass.lower() == 'pki-certificate-template' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] == 'Certificate-Enrollment':
+                        out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'Enroll', inherited(dacl)))
+                    
+
 
 
             elif dacl['Type'] == 'ACCESS_ALLOWED_ACE':
@@ -1179,7 +1294,11 @@ class AdDumper:
                 if WriteOwner:
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WriteOwner', inherited(dacl)))
                 if AllExtendedRights:
-                    out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AllExtendedRights', inherited(dacl)))    
+                    out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AllExtendedRights', inherited(dacl))) 
+                if objectClass.lower() == 'pki-enrollment-service' and 'GENERIC_WRITE' in dacl['Privs']:
+                    out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'ManageCA', inherited(dacl))) 
+                    if 'ADS_RIGHT_DS_DELETE_CHILD' in dacl['Privs']:
+                        out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'ManageCertificates', inherited(dacl))) 
 
         return out
     
@@ -1195,6 +1314,8 @@ class AdDumper:
                 return self.bh_parent_map[pc]
             elif (pc.startswith('CN=Builtin,DC=')):
                 return {'ObjectIdentifier': 'S-1-5-32', 'ObjectType': 'Base'} 
+            elif (pc.startswith('CN=Configuration,DC=')):
+                return None
             else:
                 self.logger.debug('No container found for {}'.format(self._fp(entry, 'distinguishedName')))
                 return None
@@ -1221,7 +1342,7 @@ class AdDumper:
             'displayname' : self._fp(entry,'displayName', '').upper(),
             'domainsid' : self.get_domain_sid(entry['objectSid']) if 'objectSid' in entry else '',
             'description' : self._fp(entry, 'description', [None])[0], 
-            'highvalue': self._hv(entry['objectSid']) if 'objectSid' in entry else False, # not sure if this is correct, but this is no longer included in v6 so will leave it as is
+            #'highvalue': self._hv(entry['objectSid']) if 'objectSid' in entry else False, # not sure if this is correct, but this is no longer included in v6 so will leave it as is
             'isaclprotected': entry['nTSecurityDescriptor']['IsACLProtected'],
             'collected': True
         }
@@ -1233,6 +1354,152 @@ class AdDumper:
             'ContainedBy':  self._get_container(entry),
             'Aces': self.convert_bloodhound_acl(entry)
         }
+
+
+    def _parse_cert(self, data):
+        return load_certificate(FILETYPE_ASN1, data)
+    
+    def _parse_cert_info(self, cert):
+        bcdata = [cert.get_extension(a).get_data() for a in range(0, cert.get_extension_count()) if cert.get_extension(a).get_short_name() == b'basicConstraints']
+        bcdata = bcdata[0] if bcdata else b''
+        bc =  False if bcdata != b'\x03\x01\x01\xff' else True # this probably works but not great
+        out = {
+            'certthumbprint': cert.digest('sha1').decode('utf8').replace(':', ''),
+            'certname': cert.digest('sha1').decode('utf8').replace(':', ''),
+            'hasbasicconstraints' : bc,
+            'basicconstraintpathlength' : 0, # TODO: need to fix
+            'caname' : [a[1] for a in cert.get_subject().get_components() if a[0] == b'CN'][0]
+        }
+        return out
+
+
+    def bloodhound_map_enterpriseca(self, entry):
+        domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
+        certs = [self._parse_cert(unhexlify(a)) for a in self._fp(entry,'cACertificate', [])]
+        cert1 = self._parse_cert_info(certs[0])
+        domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
+        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_ENTERPRISECA_KEYS}}
+        out['Properties'].update({a: self._fp(entry, a) for a in BH_ENTERPRISECA_PROPERTIES})
+        unique_properties = {
+            'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
+            'domain': domainName.upper(),
+            'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
+            #"flags": "SUPPORTS_NT_AUTHENTICATION, CA_SERVERTYPE_ADVANCED", flags
+            'dnshostname': self._fp(entry, 'dNSHostName'),
+            'caname' : self._fp(entry, 'name'),
+            'certchain': [a.digest('sha1').decode('utf8').replace(':', '') for a in certs],
+            'certthumbprint' : cert1['certthumbprint'],
+            'certname': cert1['certname'],
+            'hasbasicconstraints': cert1['hasbasicconstraints'],
+            'basicconstraintpathlength': cert1['basicconstraintpathlength']
+        }
+        out['Properties'].update(unique_properties)
+        out['HostingComputer'] = None # TODO - looks to be the SID of the computer with the dnshostname
+        out['CARegistryData'] = None # TODO - https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/CARegistryData.cs
+        out['EnabledCertTemplates'] = [self.bh_cert_temp_map[a] for a in self._fp(entry, 'certificateTemplates', [])]
+        del out['Properties']['displayname']
+        del out['Properties']['collected']
+        return out
+
+
+
+    def bloodhound_map_aiaca(self, entry):
+        domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
+        certs = [self._parse_cert(unhexlify(a)) for a in self._fp(entry,'cACertificate', [])]
+        cert1 = self._parse_cert_info(certs[0])
+        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_AIACAS_KEYS}}
+        out['Properties'].update({a: self._fp(entry, a) for a in BH_AIACAS_PROPERTIES})
+        unique_properties = {
+            'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
+            'domain': domainName.upper(),
+            'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
+            'certchain': [a.digest('sha1').decode('utf8').replace(':', '') for a in certs],
+            'certthumbprint' : cert1['certthumbprint'],
+            'certname': cert1['certname'],
+            'hascrosscertificatepair' : True if 'crossCertificatePair' in entry else False,
+            'crosscertificatepair': self._fp(entry, 'crossCertificatePair', []), # TODO: Will probably need to do parsing here
+            'hasbasicconstraints': cert1['hasbasicconstraints'],
+            'basicconstraintpathlength': cert1['basicconstraintpathlength']
+        }
+        out['Properties'].update(unique_properties)
+        del out['Properties']['displayname']
+        del out['Properties']['collected']
+        return out
+
+
+    def bloodhound_map_ntauthstore(self, entry):
+        domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
+        certs = [self._parse_cert(unhexlify(a)) for a in self._fp(entry,'cACertificate', [])]
+        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_NTAUTHSTORES_KEYS}}
+        out['Properties'].update({a: self._fp(entry, a) for a in BH_NTAUTHSTORES_PROPERTIES})
+        unique_properties = {
+            'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
+            'domain': domainName.upper(),
+            'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
+            'certthumbprints': [a.digest('sha1').decode('utf8').replace(':', '') for a in certs]
+        }
+        out['Properties'].update(unique_properties)
+        del out['Properties']['displayname']
+        del out['Properties']['collected']
+        return out
+
+    def bloodhound_map_rootca(self, entry):
+        domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
+        certs = [self._parse_cert(unhexlify(a)) for a in self._fp(entry,'cACertificate', [])]
+        cert1 = self._parse_cert_info(certs[0])
+        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_ROOTCA_KEYS}}
+        out['Properties'].update({a: self._fp(entry, a) for a in BH_ROOTCA_PROPERTIES})
+        unique_properties = {
+            'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
+            'domain': domainName.upper(),
+            'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
+            'certchain': [a.digest('sha1').decode('utf8').replace(':', '') for a in certs],
+            'certthumbprint' : cert1['certthumbprint'],
+            'certname': cert1['certname'],
+            'hasbasicconstraints': cert1['hasbasicconstraints'],
+            'basicconstraintpathlength': cert1['basicconstraintpathlength']
+        }
+        out['Properties'].update(unique_properties)
+        out['DomainSID'] = {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
+        del out['Properties']['displayname']
+        del out['Properties']['collected']
+        return out
+
+    # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Processors/LDAPPropertyProcessor.cs#L484
+    def bloodhound_map_certtemplate(self, entry):
+        domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
+        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_CERTTEMPLATE_KEYS}}
+        out['Properties'].update({a: self._fp(entry, a) for a in BH_CERTTEMPLATE_PROPERTIES})
+        unique_properties = {
+            'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
+            'domain': domainName.upper(),
+            'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
+            'displayname': self._fp(entry, 'displayName', ''),
+            'validityperiod' : '', # pKIExpirationPeriod
+            'renewalperiod': '', # pKIOverlapPeriod
+            'schemaversion' : self._fp(entry, 'msPKI-Template-Schema-Version'), # msPKI-Template-Schema-Version
+            'enrollmentflag': '', #msPKI-Enrollment-Flag "INCLUDE_SYMMETRIC_ALGORITHMS, PUBLISH_TO_DS, AUTO_ENROLLMENT"
+            'oid' : self._fp(entry, 'msPKI-Cert-Template-OID'),
+            'requiresmanagerapproval' : False,
+            'nosecurityextension' : False,
+            'certificatenameflag': '', # msPKI-Certificate-Name-Flag "SUBJECT_ALT_REQUIRE_UPN, SUBJECT_REQUIRE_DIRECTORY_PATH",
+            'enrolleesuppliessubject': False,
+            'subjectaltrequireupn': True,
+            'subjectaltrequiredns': True,
+            'subjectaltrequiredomaindns': False,
+            'subjectaltrequireemail': False,
+            'subjectaltrequirespn': False,
+            'subjectrequireemail': False,
+            'ekus': [ "1.3.6.1.4.1.311.10.3.4"], #pKIExtendedKeyUsage?
+            'certificateapplicationpolicy': [],
+            'authorizedsignatures': 0,
+            'applicationpolicies': [],
+            'issuancepolicies': [],
+            'effectiveekus': [ "1.3.6.1.4.1.311.10.3.4" ], #pKIExtendedKeyUsage? msPKI-Certificate-Application-Policy?
+            'authenticationenabled': False            
+        }
+        out['Properties'].update(unique_properties)
+        return out
 
 
     def bloodhound_map_container(self, entry):
@@ -1281,7 +1548,6 @@ class AdDumper:
         out['Links'] = self._get_gplink(entry) # [{'IsEnforced': False, 'GUID': ''}] 
         out['Trusts'] = [] 
         out['Properties'].update({a: self._fp(entry, a) for a in BH_DOMAIN_PROPERTIES})
-        out['ChildObjects'] = []
         unique_properties = {
             'domainsid': self._fp(entry, 'objectSid'),
             'domain': domainName,
@@ -1382,6 +1648,8 @@ class AdDumper:
         for key in ['containers', 'groups']:
             if key in dump:
                 methods_included.append(key.capitalize().rstrip('s'))
+        if [a for a in dump if a.startswith('cert')]:
+            methods_included.append('CertServices')
         methods = reduce(lambda x, y: x | y,[FLAGS['collectionMethods'][a] for a in methods_included])
         if 'domains' in dump:
             self.bh_core_domain = '.'.join([a.replace('DC=', '').upper() for a in self._fp(dump['domains'][0], 'distinguishedName', '').split(',') if a.startswith('DC=')])
@@ -1395,18 +1663,42 @@ class AdDumper:
         if 'gpos' in dump:
             for entry in dump['gpos']:
                 self.bh_gpo_map[self._fp(entry, 'distinguishedName').upper()] = self._fp(entry, 'objectGUID').upper().translate({ord('{'):None,ord('}'):None})
-        
-        for key in ['containers', 'computers', 'domains', 'gpos', 'groups', 'ous', 'users']: 
+
+        if 'certtemplates' in dump:
+            for entry in dump['certtemplates']:
+                self.bh_cert_temp_map[self._fp(entry, 'name')] = {'ObjectIdentifier': self._fp(entry, 'objectGUID').upper().translate({ord('{'):None,ord('}'):None}), 'ObjectType': 'CertTemplate'}
+
+
+        parse_categories = ['certauthorities', 'certenrollservices', 'certtemplates', 'containers', 'computers', 'domains', 'gpos', 'groups', 'ous', 'users']
+
+        ca_categories = {
+            'aiacas': 'CN=AIA,CN=PUBLIC KEY SERVICES,CN=SERVICES,CN=CONFIGURATION', 
+            'ntauthstores': 'CN=PUBLIC KEY SERVICES,CN=SERVICES,CN=CONFIGURATION', 
+            'rootcas': 'CN=CERTIFICATION AUTHORITIES,CN=PUBLIC KEY SERVICES,CN=SERVICES,CN=CONFIGURATION'
+        }
+
+        for key in parse_categories: 
             if key in dump:
-                self.logger.info('Generating Bloodhound {} file'.format(key))
-                processed = {}
-                processed['data'] = [getattr(self, 'bloodhound_map_{}'.format(key.rstrip('s')))(a) for a in dump[key]]
-                if key == 'domains' and 'trusted_domains' in dump:
-                    processed['data'][0]['Trusts'] = [self.bloodhound_map_trusted_domains(a) for a in dump['trusted_domains']]
-                processed['meta'] = {'methods' : methods, 'type' : key, 'count': len(dump[key]), 'version' : 6} # methods
-                fn = '{}{}_{}.json'.format(filename_base + '_' if filename_base else '', timestamp, key)
-                self.logger.debug('Writing Bloodhound {} output to: {}'.format(key, fn))
-                open(fn, 'w').write(json.dumps(processed, indent=4))
+                if key =='certauthorities':
+                    for fieldname in ca_categories:
+                        # pre filter based on parent container
+                        data = [a for a in dump[key] if a['distinguishedName'].split(',', 1)[1].upper().startswith(ca_categories[fieldname])]
+                        self._bh_parser_func(dump, data, fieldname, methods, filename_base, timestamp)
+                else:
+                    fieldname = key if key != 'certenrollservices' else 'enterprisecas'
+                    self._bh_parser_func(dump, dump[key], fieldname, methods, filename_base, timestamp)
+
+
+    def _bh_parser_func(self, dump, data, fieldname, methods, filename_base, timestamp):
+        self.logger.info('Generating Bloodhound {} file'.format(fieldname))
+        processed = {}
+        processed['data'] = [getattr(self, 'bloodhound_map_{}'.format(fieldname.rstrip('s')))(a) for a in data]
+        if fieldname == 'domains' and 'trusted_domains' in dump:
+            processed['data'][0]['Trusts'] = [self.bloodhound_map_trusted_domains(a) for a in dump['trusted_domains']]
+        processed['meta'] = {'methods' : methods, 'type' : fieldname, 'count': len(data), 'version' : 6} # methods
+        fn = '{}{}_{}.json'.format(filename_base + '_' if filename_base else '', timestamp, fieldname)
+        self.logger.debug('Writing Bloodhound {} output to: {}'.format(fieldname, fn))
+        open(fn, 'w').write(json.dumps(processed, indent=4))
 
 
     def import_dump(self, dumpfile):
@@ -1523,9 +1815,8 @@ def command_line():
         if not args.bh_output:
             print('The bloodhound export must be enabled in import mode, use -b option')
             sys.exit(2)
-        dumper = AdDumper(logger=logger, raw=raw)
+        dumper = AdDumper(logger=logger, raw=raw, import_mode=True)
         data = dumper.import_dump(args.input_file)
-        
     else:
         if args.realm:
             dc = args.dc_ip if args.dc_ip else args.target_ip if args.target_ip else args.domain_controller
