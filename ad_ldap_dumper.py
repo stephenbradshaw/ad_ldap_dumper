@@ -863,7 +863,7 @@ class AdDumper:
 
     def query_computers(self, attributes=ldap3.ALL_ATTRIBUTES):
         self.logger.info('Querying computer objects from LDAP')
-        query = '(objectClass=computer)' # if not self.alt_query else '(objectCategory=computer)' #(&(objectClass=computer)(objectClass=user))
+        query = '(objectCategory=computer)'
         if self.config and 'computers' in self.config:
             query = self.config['computers']
             self.logger.debug('Query override from config file: {}'.format(query))
@@ -875,7 +875,7 @@ class AdDumper:
     def query_domains(self, attributes=ldap3.ALL_ATTRIBUTES):
         # TODO add a derived domain functional param from msDS-Behavior-Version ?
         self.logger.info('Querying domain objects from LDAP')
-        query = '(objectClass=domain)' # if not self.alt_query else '(objectCategory=domain)'
+        query = '(objectClass=domain)'
         if self.config and 'domains' in self.config:
             query = self.config['domains']
             self.logger.debug('Query override from config file: {}'.format(query))
@@ -947,7 +947,7 @@ class AdDumper:
     def query_users(self, attributes=ldap3.ALL_ATTRIBUTES):
         self.logger.info('Querying user objects from LDAP')
         #query = '(&(objectClass=user)(objectCategory=person))' if not self.alt_query else '(objectCategory=person)' #(objectClass=user)
-        query = '(&(objectClass=user)(objectCategory=person))' 
+        query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)))' 
         if self.config and 'users' in self.config:
             query = self.config['users']
             self.logger.debug('Query override from config file: {}'.format(query))
@@ -1117,18 +1117,27 @@ class AdDumper:
         # acl info here
         #https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/990fb975-ab31-4bc1-8b75-5da132cd4584
         #https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-ace_header 
+
+        out = []
+        tbs = lambda x : x if x.startswith('S-1-5-21-') else '{}-{}'.format(self.bh_core_domain, x)
+        build_hb_acl = lambda w,x,y,z: {'PrincipalSID': tbs(w), 'PrincipalType': x, 'RightName': y, 'IsInherited': z}
+        inherited = lambda x: 'INHERITED_ACE' in x['Flags']
+        objectClass = self.get_class(entry)
+
+        creator_system_sids = ['S-1-3-0', 'S-1-5-18', 'S-1-5-10'] # creater owner and local system
+        allowed_dacls = ['ACCESS_ALLOWED_OBJECT_ACE', 'ACCESS_ALLOWED_ACE'] # ace types we care about
+
+
+        # parse msDS-GroupMSAMembership for ReadGMSAPassword permissions
+        if 'msDS-GroupMSAMembership' in entry:
+            for gmsadacl in entry['msDS-GroupMSAMembership']['Dacls']:
+                out.append(build_hb_acl(gmsadacl['Sid'], self._ft(gmsadacl['Sid']), 'ReadGMSAPassword', inherited(gmsadacl)))
         
 
         sd = entry['nTSecurityDescriptor']
         dacls = sd['Dacls']
         owner = sd['OwnerSid']
-        objectClass = self.get_class(entry)
-        out = []
-        tbs = lambda x : x if x.startswith('S-1-5-21-') else '{}-{}'.format(self.bh_core_domain, x)
-        build_hb_acl = lambda w,x,y,z: {'PrincipalSID': tbs(w), 'PrincipalType': x, 'RightName': y, 'IsInherited': z}
-        inherited = lambda x: 'INHERITED_ACE' in x['Flags']
-        creator_system_sids = ['S-1-3-0', 'S-1-5-18', 'S-1-5-10'] # creater owner and local system
-        allowed_dacls = ['ACCESS_ALLOWED_OBJECT_ACE', 'ACCESS_ALLOWED_ACE'] # ace types we care about
+        
 
         ignore_conditions = [
             # no creator owner/local system
@@ -1191,13 +1200,14 @@ class AdDumper:
                     AllExtendedRights = True
                
                
+                # Think this is wrong
                 # WriteDacl, WriteOwner, GenericWrite, AllExtendedRights - combine this combo into GenericAll if also DELETE
-                #https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/990fb975-ab31-4bc1-8b75-5da132cd4584
+                # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/990fb975-ab31-4bc1-8b75-5da132cd4584
                 # GenericAll = The right to create or delete child objects, delete a subtree, read and write properties, examine child objects
                 #  and the object itself, add and remove the object from the directory, and read or write with an extended right.
-                if GenericWrite and WriteDacl and WriteOwner and AllExtendedRights and 'DELETE' in dacl['Privs']:
-                    out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericAll', inherited(dacl)))
-                    continue
+                #if GenericWrite and WriteDacl and WriteOwner and AllExtendedRights and 'DELETE' in dacl['Privs']:
+                #    out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericAll', inherited(dacl)))
+                #    continue
 
                 if GenericWrite:
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericWrite', inherited(dacl)))
@@ -1212,6 +1222,8 @@ class AdDumper:
                     
                 # ManageCA, ManageCertificates, Enroll
 
+                # SQLAdmin
+
                 if ('ADS_RIGHT_DS_WRITE_PROP' in dacl['Privs'] or GenericWrite) and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags']:
                     if objectClass.lower() == 'group' and dacl['ControlObjectType'] == 'Member':
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddMember', inherited(dacl)))
@@ -1219,7 +1231,7 @@ class AdDumper:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddAllowedToAct', inherited(dacl)))
                     elif objectClass.lower() == 'computer' and dacl['ControlObjectType'] == 'User-Account-Restrictions':
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WriteAccountRestrictions', inherited(dacl)))
-                    elif objectClass.lower() in ['computer', 'user'] and dacl['ControlObjectType'] == 'ms-DS-Key-Credential-Link':
+                    elif objectClass.lower() in ['computer', 'user', 'ms-ds-group-managed-service-account'] and dacl['ControlObjectType'] == 'ms-DS-Key-Credential-Link':
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddKeyCredentialLink', inherited(dacl)))
                     elif objectClass.lower() == 'user' and dacl['ControlObjectType'] == 'Service-Principal-Name':
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WriteSPN', inherited(dacl)))
@@ -1258,6 +1270,7 @@ class AdDumper:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'Enroll', inherited(dacl)))
                     
 
+                    
 
 
             elif dacl['Type'] == 'ACCESS_ALLOWED_ACE':
@@ -1265,13 +1278,13 @@ class AdDumper:
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericAll', inherited(dacl)))
                     continue # this implies all other rights
                 
-                if 'ADS_RIGHT_DS_WRITE_PROP' in dacl['Privs'] and objectClass.lower() in ['user', 'group', 'computer', 'gpo']:
+                if 'ADS_RIGHT_DS_WRITE_PROP' in dacl['Privs'] and objectClass.lower() in ['user', 'group', 'computer', 'gpo', 'ms-ds-group-managed-service-account']:
                     GenericWrite = True
                 
                 if 'WRITE_OWNER' in dacl['Privs']:
                     WriteOwner = True
                 
-                if 'ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() in ['user', 'domain']:
+                if 'ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() in ['user', 'domain', 'ms-ds-group-managed-service-account']:
                     AllExtendedRights = True
 
                 if ('ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() == 'computer' and 
@@ -1282,10 +1295,11 @@ class AdDumper:
                     WriteDacl = True
 
 
+                # think this was mistaken
                 # WriteDacl, WriteOwner, GenericWrite, AllExtendedRights - combine this combo into GenericAll if also DELETE
-                if GenericWrite and WriteDacl and WriteOwner and AllExtendedRights and 'DELETE' in dacl['Privs']:
-                    out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericAll', inherited(dacl)))
-                    continue
+                #if GenericWrite and WriteDacl and WriteOwner and AllExtendedRights and 'DELETE' in dacl['Privs']:
+                #    out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericAll', inherited(dacl)))
+                #    continue
 
                 if GenericWrite:
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericWrite', inherited(dacl)))
@@ -1315,6 +1329,8 @@ class AdDumper:
             elif (pc.startswith('CN=Builtin,DC=')):
                 return {'ObjectIdentifier': 'S-1-5-32', 'ObjectType': 'Base'} 
             elif (pc.startswith('CN=Configuration,DC=')):
+                return None
+            elif (pc.startswith('DC=')):
                 return None
             else:
                 self.logger.debug('No container found for {}'.format(self._fp(entry, 'distinguishedName')))
@@ -1595,12 +1611,14 @@ class AdDumper:
     def bloodhound_map_user(self, entry):
         '''Maps user entries from dump into a BloodHound compatible format'''
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_USER_KEYS}}
+        out['SPNTargets'] = []
         out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', [])
         out['AllowedToDelegate'] = self._fp(entry, 'msDS-AllowedToDelegateTo', [])
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid', '')), self._fp(entry, 'primaryGroupID'))
         out['SPNPrivilege'] = [] # TODO, renamed to SPNPrivilege - https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/SPNPrivilege.cs
         out['Properties'].update({a: self._fp(entry, a) for a in BH_USER_PROPERTIES})
         unique_properties = {
+            'gmsa' : self.get_class(entry).lower() == 'ms-ds-group-managed-service-account',
             'lastlogontimestamp': self._fp(entry, 'lastLogontimeStamp', -1),
             'lastlogon': (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'lastLogon')),
             'pwdlastset': (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'pwdLastSet')),
