@@ -299,7 +299,6 @@ BH_DOMAIN_KEYS = [
 BH_GPO_KEYS = []
 
 BH_GROUP_KEYS = [
-    'Members'
 ]
 
 BH_OU_KEYS = [
@@ -316,12 +315,10 @@ BH_USER_KEYS = [
 ]
 
 BH_COMMON_PROPERTIES = [
-    #'collected',
     'description',
     'distinguishedname',
     'domain',
     'domainsid',
-    #'highvalue',
     'name',
     'whencreated'
 ]
@@ -355,7 +352,6 @@ BH_CERTAUTHORITY_PROPERTIES = [
     "basicconstraintpathlength"
 ]
 
-BH_CONTAINER_PROPERTIES = []
 
 BH_COMPUTER_PROPERTIES = [
     'enabled',
@@ -380,19 +376,16 @@ BH_GPO_PROPERTIES = [
 ]
 
 BH_GROUP_PROPERTIES = [
-    'admincount',
+    #'admincount',
     'samaccountname'
 ]
 
 BH_OU_PROPERTIES = [
-    'blocksinheritance'
 ]
 
 BH_USER_PROPERTIES = [
-    'admincount',
     'displayname',
     'dontreqpreauth',
-    'email',
     'enabled',
     'hasspn',
     'homedirectory',
@@ -472,6 +465,7 @@ class AdDumper:
         self.bh_parent_map = {}
         self.bh_gpo_map = {}
         self.bh_cert_temp_map = {}
+        self.bh_member_map = {}
         self.bh_core_domain = ''
         self.post_process_data = True
         self.multi_field = ['dSCorePropagationData', 'objectClass']
@@ -806,7 +800,7 @@ class AdDumper:
         if not self.config_containers_collected:
             self.logger.info('Querying configuration conatiner objects from LDAP')
             if 'containers' in self.methods:
-                query = '(objectClass=container)'
+                query = '(|(objectClass=container)(objectClass=configuration))'
                 if self.config and 'containers' in self.config:
                     query = self.config['containers']
                 gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
@@ -837,7 +831,7 @@ class AdDumper:
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
-        data = self.parse_records(gen)
+        data += self.parse_records(gen)
         return data
 
 
@@ -939,7 +933,8 @@ class AdDumper:
         for index in range(0, len(data)):            
             if 'trustAttributesFlags' in data[index]:
                 fp = lambda x : x in data[index]['trustAttributesFlags']
-                data[index]['sidFiltering'] = True if not fp('WITHIN_FOREST') else fp('QUARANTINED_DOMAIN')
+                #data[index]['sidFiltering'] = True if not fp('WITHIN_FOREST') else fp('QUARANTINED_DOMAIN')
+                data[index]['sidFiltering'] = bool(fp('QUARANTINED_DOMAIN'))
                 data[index]['transitive'] = True if not (fp('TREAT_AS_EXTERNAL') or fp('CROSS_ORGANIZATION')) else False
 
         return data
@@ -1106,7 +1101,8 @@ class AdDumper:
         '''Fetch type of sid'''
         return self.sidLT[sid][1] if sid in self.sidLT else 'Unknown'
 
-
+    def _tbs(self, sid):
+        return sid if sid.startswith('S-1-5-21-') else '{}-{}'.format(self.bh_core_domain, sid)
 
     def convert_bloodhound_acl(self, entry):
         '''Parse security descriptor from entry into Bloodhound format'''
@@ -1119,8 +1115,7 @@ class AdDumper:
         #https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-ace_header 
 
         out = []
-        tbs = lambda x : x if x.startswith('S-1-5-21-') else '{}-{}'.format(self.bh_core_domain, x)
-        build_hb_acl = lambda w,x,y,z: {'PrincipalSID': tbs(w), 'PrincipalType': x, 'RightName': y, 'IsInherited': z}
+        build_hb_acl = lambda w,x,y,z: {'PrincipalSID': self._tbs(w), 'PrincipalType': x, 'RightName': y, 'IsInherited': z}
         inherited = lambda x: 'INHERITED_ACE' in x['Flags']
         objectClass = self.get_class(entry)
 
@@ -1284,12 +1279,13 @@ class AdDumper:
                 if 'WRITE_OWNER' in dacl['Privs']:
                     WriteOwner = True
                 
-                if 'ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() in ['user', 'domain', 'ms-ds-group-managed-service-account']:
+                if 'ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() in ['user', 'domain', 'ms-ds-group-managed-service-account', 'computer']:
                     AllExtendedRights = True
 
-                if ('ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() == 'computer' and 
-                dacl['Sid'] != 'S-1-5-32-544' and not dacl['Sid'].endswith('-512')):
-                    AllExtendedRights = True
+                #if ('ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() == 'computer'): 
+                #and not dacl['Sid'].endswith('-512')):
+                #dacl['Sid'] != 'S-1-5-32-544' and not dacl['Sid'].endswith('-512')):
+                    #AllExtendedRights = True
 
                 if 'WRITE_DACL' in dacl['Privs']:
                     WriteDacl = True
@@ -1322,14 +1318,14 @@ class AdDumper:
 
 
     def _get_container(self, entry):
-        if self.bh_parent_map:
+        if self.bh_parent_map:  
             pc = ','.join(self._fp(entry, 'distinguishedName').split(',')[1:])
             if pc in self.bh_parent_map:
                 return self.bh_parent_map[pc]
             elif (pc.startswith('CN=Builtin,DC=')):
                 return {'ObjectIdentifier': 'S-1-5-32', 'ObjectType': 'Base'} 
-            elif (pc.startswith('CN=Configuration,DC=')):
-                return None
+            #elif (pc.startswith('CN=Configuration,DC=')):
+            #    return {'ObjectIdentifier': 'S-1-5-32', 'ObjectType': 'Configuration'} 
             elif (pc.startswith('DC=')):
                 return None
             else:
@@ -1352,15 +1348,17 @@ class AdDumper:
 
 
     def bloodhound_map_common(self, entry):
+        domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
         common_properties = {
-            'name': '{}@{}'.format(self._fp(entry,'sAMAccountName', '').upper(), self._fp(entry,'domain', '').upper()),
+            #'name': '{}@{}'.format(self._fp(entry,'sAMAccountName', '').upper(), self._fp(entry,'domain', '').upper()),
+            'name': '{}@{}'.format(str(self._fp(entry, 'name')).upper(), domainName.upper()),
+            'domain': domainName.upper(),
             'distinguishedname' : self._fp(entry, 'distinguishedName').upper(), 
             'displayname' : self._fp(entry,'displayName', '').upper(),
             'domainsid' : self.get_domain_sid(entry['objectSid']) if 'objectSid' in entry else '',
             'description' : self._fp(entry, 'description', [None])[0], 
             #'highvalue': self._hv(entry['objectSid']) if 'objectSid' in entry else False, # not sure if this is correct, but this is no longer included in v6 so will leave it as is
-            'isaclprotected': entry['nTSecurityDescriptor']['IsACLProtected'],
-            'collected': True
+            'isaclprotected': entry['nTSecurityDescriptor']['IsACLProtected']
         }
         return {
             'Properties': {**{a: self._fp(entry, a) for a in BH_COMMON_PROPERTIES}, **common_properties},
@@ -1414,7 +1412,6 @@ class AdDumper:
         out['CARegistryData'] = None # TODO - https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/CARegistryData.cs
         out['EnabledCertTemplates'] = [self.bh_cert_temp_map[a] for a in self._fp(entry, 'certificateTemplates', [])]
         del out['Properties']['displayname']
-        del out['Properties']['collected']
         return out
 
 
@@ -1439,7 +1436,6 @@ class AdDumper:
         }
         out['Properties'].update(unique_properties)
         del out['Properties']['displayname']
-        del out['Properties']['collected']
         return out
 
 
@@ -1456,7 +1452,6 @@ class AdDumper:
         }
         out['Properties'].update(unique_properties)
         del out['Properties']['displayname']
-        del out['Properties']['collected']
         return out
 
     def bloodhound_map_rootca(self, entry):
@@ -1478,7 +1473,6 @@ class AdDumper:
         out['Properties'].update(unique_properties)
         out['DomainSID'] = {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
         del out['Properties']['displayname']
-        del out['Properties']['collected']
         return out
 
     # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Processors/LDAPPropertyProcessor.cs#L484
@@ -1519,12 +1513,20 @@ class AdDumper:
 
 
     def bloodhound_map_container(self, entry):
+        domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_CONTAINER_KEYS}}
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_CONTAINER_PROPERTIES})
+        #out['Properties'].update({a: self._fp(entry, a) for a in BH_CONTAINER_PROPERTIES})
+        out['DomainSID'] = {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
         out['ChildObjects'] = []
         unique_properties = {
+            'name' : '{}@{}'.format(str(self._fp(entry, 'name')).upper(), domainName.upper()),
+            'domain': domainName.upper(),
+            'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else ''
         }
         out['Properties'].update(unique_properties)
+        del out['Properties']['displayname']
+        del out['Properties']['whencreated']
+        del out['Properties']['description']
         return out
 
 
@@ -1532,14 +1534,22 @@ class AdDumper:
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_COMPUTER_KEYS}}
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid')), self._fp(entry, 'primaryGroupID'))
         out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', [])
-        out['AllowedToDelegate'] = self._fp(entry, 'msDS-AllowedToDelegateTo', [])
+        out['AllowedToDelegate'] = self._fp(entry, 'msDS-AllowedToDelegateTo', []) # TODO: Confirm this has right format
         out['Status'] = None # can you connect to computer, probably not suitable for this tool but if not null format is { "Connectable": false, "Error": "PwdLastSetOutOfRange" }
         out['AllowedToAct'] = self._fp(entry, 'msDS-AllowedToActOnBehalfOfOtherIdentity', []) # TODO: not sure output will be right here 3f78c3e5-f79a-46bd-a0b8-9d18116ddc79
-        for key in ['Sessions', 'PrivilegedSessions', 'RegistrySessions', 'LocalAdmins', 'RemoteDesktopUsers', 'DcomUsers', 'PSRemoteUsers']:
+        out['IsDC'] = 'SERVER_TRUST_ACCOUNT' in self._fp(entry, 'userAccountControlFlags', [])
+        out['DumpSMSAPassword'] = [] # Standalone Managed Service Account, requires LSA secret dumping on local machine
+        out['LocalGroups'] = []
+        out['UserRights'] = []
+        out['DomainSID'] = self.get_domain_sid(self._fp(entry, 'objectSid'))
+        out['DCRegistryData'] = { "CertificateMappingMethods": None, "StrongCertificateBindingEnforcement": None  }
+        for key in ['Sessions', 'PrivilegedSessions', 'RegistrySessions']:
             out[key] = {'Results': [],'Collected': False, 'FailureReason': None}
 
         out['Properties'].update({a: self._fp(entry, a) for a in BH_COMPUTER_PROPERTIES})
         unique_properties = {
+            'email': self._fp(entry, 'mail'),
+            'isdc': 'SERVER_TRUST_ACCOUNT' in self._fp(entry, 'userAccountControlFlags', []),
             'lastlogontimestamp': self._fp(entry, 'lastLogontimeStamp', -1),
             'lastlogon' : (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'lastLogon')),
             'pwdlastset': (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'pwdLastSet')),
@@ -1552,6 +1562,7 @@ class AdDumper:
             'enabled': False if 'ACCOUNTDISABLE' in self._fp(entry, 'userAccountControlFlags') else True,
         }
         out['Properties'].update(unique_properties)
+        del out['Properties']['displayname']
         return out
 
      #IsDeleted
@@ -1570,19 +1581,41 @@ class AdDumper:
             'name' : domainName,
             'functionallevel': (FUNCTIONAL_LEVELS[self._fp(entry,'msDS-Behavior-Version')] 
                 if self._fp(entry,'msDS-Behavior-Version') in FUNCTIONAL_LEVELS else self._fp(entry,'msDS-Behavior-Version')),
-            'whencreated' : ''
+            'whencreated' : '',
+            'collected': True
         }
         out['Properties'].update(unique_properties)
         del out['Properties']['displayname']
         return out
+    
+    def _bh_map_group_members(self, entry):
+        out = []
+        for member in self._fp(entry, 'member', []):
+            if member in self.bh_member_map:
+                out.append(self.bh_member_map[member])
+            elif 'ForeignSecurityPrincipals' in member:
+                out.append({'ObjectIdentifier': self._tbs(member.split(',')[0].split('=')[-1]), 'ObjectType': 'Group'})
+            else:
+                self.logger.debug('Group member {} could not be mapped to an object'.format(member))
+                out.append({'ObjectIdentifier': member, 'ObjectType': 'Unknown'})
+        return out
+
+        
+        #return [self.bh_member_map[a] for a in ]
+
 
     def bloodhound_map_group(self, entry):
+        domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_GROUP_KEYS}}
         out['Properties'].update({a: self._fp(entry, a) for a in BH_GROUP_PROPERTIES})
+        out['Members'] = self._bh_map_group_members(entry) 
+        out['ObjectIdentifier'] = self._tbs(self._fp(entry, 'objectSid'))
         unique_properties = {
-        
+            'admincount': bool(self._fp(entry, 'adminCount')),
+            'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else ''
         }
         out['Properties'].update(unique_properties)
+        del out['Properties']['displayname']
         return out
 
     def bloodhound_map_gpo(self, entry):
@@ -1590,39 +1623,44 @@ class AdDumper:
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_GPO_KEYS}}
         out['Properties'].update({a: self._fp(entry, a) for a in BH_GPO_PROPERTIES})
         unique_properties = {
-            'name' : '{}@{}'.format(self._fp(entry, 'displayName'), domainName),
-            'gpcpath' : self._fp(entry, 'gPCFileSysPath'),
+            'name' : '{}@{}'.format(self._fp(entry, 'displayName').upper(), domainName),
+            'gpcpath' : self._fp(entry, 'gPCFileSysPath').upper(),
             'domainsid' : {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else ''
         }
         out['Properties'].update(unique_properties)
         return out
 
     def bloodhound_map_ou(self, entry):
+        domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_OU_KEYS}}
         out['Properties'].update({a: self._fp(entry, a) for a in BH_OU_PROPERTIES})
         out['ChildObjects'] = []
         out['GPOChanges'] = {'LocalAdmins': [], 'RemoteDesktopUsers': [], 'DcomUsers': [], 'PSRemoteUsers': [], 'AffectedComputers': []}
         out['Links'] = self._get_gplink(entry) # [{'IsEnforced': False, 'GUID': ''}] 
         unique_properties = {
+            'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
+            'blocksinheritance': int(self._fp(entry, 'gpoptions', 0)) == 1
         }
         out['Properties'].update(unique_properties)
+        del out['Properties']['displayname']
         return out
 
     def bloodhound_map_user(self, entry):
         '''Maps user entries from dump into a BloodHound compatible format'''
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_USER_KEYS}}
-        out['SPNTargets'] = []
+        out['SPNTargets']
         out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', [])
         out['AllowedToDelegate'] = self._fp(entry, 'msDS-AllowedToDelegateTo', [])
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid', '')), self._fp(entry, 'primaryGroupID'))
-        out['SPNPrivilege'] = [] # TODO, renamed to SPNPrivilege - https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/SPNPrivilege.cs
+        #out['SPNPrivilege'] = [] # TODO, renamed to SPNPrivilege - https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/SPNPrivilege.cs
         out['Properties'].update({a: self._fp(entry, a) for a in BH_USER_PROPERTIES})
         unique_properties = {
-            'gmsa' : self.get_class(entry).lower() == 'ms-ds-group-managed-service-account',
+            #'gmsa' : self.get_class(entry).lower() == 'ms-ds-group-managed-service-account',
+            'email': self._fp(entry, 'mail'),
             'lastlogontimestamp': self._fp(entry, 'lastLogontimeStamp', -1),
             'lastlogon': (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'lastLogon')),
             'pwdlastset': (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'pwdLastSet')),
-            'admincount': True if self._fp(entry, 'adminCount') else False,
+            'admincount': bool(self._fp(entry, 'adminCount')),
             'sensitive': True if 'NOT_DELEGATED' in self._fp(entry, 'userAccountControlFlags', []) else False,
             'dontreqpreauth': True if 'DONT_REQ_PREAUTH' in self._fp(entry, 'userAccountControlFlags', []) else False,
             'passwordnotreqd': True if 'PASSWD_NOTREQD' in self._fp(entry, 'userAccountControlFlags', []) else False,
@@ -1648,13 +1686,25 @@ class AdDumper:
             'TargetDomainName': self._fp(entry, 'trustPartner').upper(), 
             'TargetDomainSid': self._fp(entry, 'securityIdentifier'), 
             'IsTransitive' : self._fp(entry, 'transitive'),
-            'TrustDirection': self._fp(entry, 'trustDirection'),
-            'TrustType': self._fp(entry, 'trustType'),
+            'TrustDirection': LOOKUPS['trustDirection'][self._fp(entry, 'trustDirection')].title(),
+            'TrustType': self._bh_trust_type(entry),
             'SidFilteringEnabled' : self._fp(entry, 'sidFiltering')
         }
+    
+    def _bh_trust_type(self, entry):
+        flags = entry.get('trustAttributesFlags', [])
+        if 'WITHIN_FOREST' in flags:
+            return 'ParentChild'
+        elif 'FOREST_TRANSITIVE' in flags:
+            return 'Forest'
+        elif not [a for a in flags if a in ['WITHIN_FOREST', 'FOREST_TRANSITIVE']]:
+            return 'External'
+        else:
+            return 'Unknown'
+
 
     def _get_containter_def(self, entry):
-        oc_to_name = lambda x : 'Container' if 'Container' in x else 'Domain' if 'Domain' in x else 'OU'
+        oc_to_name = lambda x : 'Container' if 'Container' in x else 'Domain' if 'Domain' in x else 'Configuration' if 'Configuration' in x else 'OU'
         return {'ObjectIdentifier': self._get_entry_id(entry), 'ObjectType': oc_to_name(self._fp(entry, 'objectCategory')) }
 
 
@@ -1673,6 +1723,11 @@ class AdDumper:
             self.bh_core_domain = '.'.join([a.replace('DC=', '').upper() for a in self._fp(dump['domains'][0], 'distinguishedName', '').split(',') if a.startswith('DC=')])
         else:
             self.logger.info('No domain info in dump file, this conversion is probably going to fail...')
+
+        for key in ['users', 'groups', 'computers']:
+            map_cat = lambda x: 'User' if x.split(',')[0].split('=')[-1] == 'Person' else x.split(',')[0].split('=')[-1]
+            mapentry = {self._fp(a, 'distinguishedName'): {'ObjectIdentifier': self._fp(a, 'objectSid'), 'ObjectType': map_cat(self._fp(a, 'objectCategory'))} for a  in dump[key]}
+            self.bh_member_map = {**self.bh_member_map, **mapentry}
         
         for key in ['domains', 'containers', 'ous']:
             mapentry = {self._fp(a, 'distinguishedName'): self._get_containter_def(a) for a in dump[key]}
