@@ -21,9 +21,7 @@ from impacket.uuid import bin_to_string
 from OpenSSL.crypto import load_certificate, FILETYPE_ASN1
 
 
-# TODO: Certificate info collection
 # TODO: restrict attributes returned based on an analysis of the schema? There might be a relevant option in the Connection for this..
-# TODO: Investigate GPO Local group Collection??? Is this possible through LDAP or does it require SYSVOL file parsing?
 # TODO: Add option to split output into seperate files based on top level key names?
 # TODO: Optional retrieval and parsing of SACL for admin connections?
 
@@ -174,10 +172,8 @@ LOOKUPS = {
     'trustDirection' : {0 : 'DISABLED', 1: 'INBOUND', 2: 'OUTBOUND', 3: 'BIDIRECTIONAL'},
     
     #https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/36565693-b5e4-4f37-b0a8-c1b12138e18e
-    'trustType' : {1 : 'DOWNLEVEL', 2: 'UPLEVEL', 3: 'MIT', 4: 'DCE'}
+    'trustType' : {1 : 'DOWNLEVEL', 2: 'UPLEVEL', 3: 'MIT', 4: 'DCE', 5: 'AAD'}
 }
-
-
 
 
 FLAGS = {
@@ -251,7 +247,7 @@ FLAGS = {
         'LocalGroups' :  (1 << 12) | (1 << 8) | (1 << 1) | (1 << 14), # 20738 - DCOM | RDP | LocalAdmin | PSRemote,
         'ComputerOnly' : 20738 | (1 << 3) | (1 << 15) | (1 << 16) | (1 << 17), # 250122 - LocalGroups | Session | UserRights | CARegistry | DCRegistry,
         'DCOnly' : (1 << 6) | (1 << 7) | 1 | (1 << 9) | (1 << 5) | (1 << 2) | (1 << 18), # 262885 - ACL | Container | Group | ObjectProps | Trusts | GPOLocalGroup | CertServices,
-        'Default' : 1 | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 9) |  20738 | (1 << 13) | (1 << 7) | (1 << 18),# 291819 - Group | Session | Trusts | ACL | ObjectProps | LocalGroups | SPNTargets | Container | CertServices,
+        'Default' : 1 | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 9) |  20738 | (1 << 13) | (1 << 7) | (1 << 18), # 291819 - Group | Session | Trusts | ACL | ObjectProps | LocalGroups | SPNTargets | Container | CertServices,
         'All' : 291819 | (1 << 4) | (1 << 2) | (1 << 15) | (1 << 16) | (1 << 17) #521215 - Default | LoggedOn | GPOLocalGroup | UserRights | CARegistry | DCRegistry
     }
 
@@ -466,6 +462,7 @@ class AdDumper:
         self.bh_gpo_map = {}
         self.bh_cert_temp_map = {}
         self.bh_member_map = {}
+        self.bh_computer_map = {}
         self.bh_core_domain = ''
         self.post_process_data = True
         self.multi_field = ['dSCorePropagationData', 'objectClass']
@@ -1042,11 +1039,16 @@ class AdDumper:
 
         for key in [a for a in data.keys() if a not in ['info', 'schema', 'meta']]:
             for index in range(0, len(data[key])):
-                for sd in ['nTSecurityDescriptor', 'msDS-GroupMSAMembership']:
+                for sd in ['nTSecurityDescriptor', 'msDS-GroupMSAMembership', 'msDS-AllowedToActOnBehalfOfOtherIdentity']:
                     if sd in data[key][index]:
                         if self.raw:
                             data[key][index]['{}_raw'.format(sd)] = data[key][index][sd]
-                        data[key][index][sd] = self.parseSecurityDescriptor(data[key][index][sd])                
+                        parsed = {}
+                        try: 
+                            parsed = self.parseSecurityDescriptor(data[key][index][sd])
+                        except Exception as e:
+                            self.logger.debug('Error in parsing security descriptor data in field {}: {}'.format(sd, str(e)))
+                        data[key][index][sd] = parsed
 
                 if 'domains' not in key:
                     if 'objectSid' in data[key][index]:
@@ -1216,8 +1218,6 @@ class AdDumper:
                 # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Processors/ACLProcessor.cs 
                     
                 # ManageCA, ManageCertificates, Enroll
-
-                # SQLAdmin
 
                 if ('ADS_RIGHT_DS_WRITE_PROP' in dacl['Privs'] or GenericWrite) and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags']:
                     if objectClass.lower() == 'group' and dacl['ControlObjectType'] == 'Member':
@@ -1529,14 +1529,24 @@ class AdDumper:
         del out['Properties']['description']
         return out
 
+    def _bh_parse_allowed_to_act(self, entry):
+        out = []
+        if 'msDS-AllowedToActOnBehalfOfOtherIdentity' in entry:
+            for dacl in entry['msDS-AllowedToActOnBehalfOfOtherIdentity']['Dacls']:
+                matchsid = [a for a in self.bh_member_map.values() if a['ObjectIdentifier'] == dacl['Sid']]
+                if matchsid:
+                    out.append(matchsid[0])
+        return out
+
+
 
     def bloodhound_map_computer(self, entry):
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_COMPUTER_KEYS}}
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid')), self._fp(entry, 'primaryGroupID'))
         out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', [])
-        out['AllowedToDelegate'] = self._fp(entry, 'msDS-AllowedToDelegateTo', []) # TODO: Confirm this has right format
+        out['AllowedToDelegate'] = self._bh_parse_delegation(entry) 
         out['Status'] = None # can you connect to computer, probably not suitable for this tool but if not null format is { "Connectable": false, "Error": "PwdLastSetOutOfRange" }
-        out['AllowedToAct'] = self._fp(entry, 'msDS-AllowedToActOnBehalfOfOtherIdentity', []) # TODO: not sure output will be right here 3f78c3e5-f79a-46bd-a0b8-9d18116ddc79
+        out['AllowedToAct'] = self._bh_parse_allowed_to_act(entry)
         out['IsDC'] = 'SERVER_TRUST_ACCOUNT' in self._fp(entry, 'userAccountControlFlags', [])
         out['DumpSMSAPassword'] = [] # Standalone Managed Service Account, requires LSA secret dumping on local machine
         out['LocalGroups'] = []
@@ -1565,12 +1575,12 @@ class AdDumper:
         del out['Properties']['displayname']
         return out
 
-     #IsDeleted
+
     #https://github.com/BloodHoundAD/SharpHoundCommon/blob/main/src/CommonLib/OutputTypes/Domain.cs
     def bloodhound_map_domain(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_DOMAIN_KEYS}}
-        out['ChildObjects'] = [] # does not appear to be populated in v6 collectors, but format was this: {'ObjectIdentifier': '', 'ObjectType': ''}
+        out['ChildObjects'] = [] 
         out['GPOChanges'] = {'LocalAdmins': [], 'RemoteDesktopUsers': [], 'DcomUsers': [], 'PSRemoteUsers': [], 'AffectedComputers': []} # requires GPO disk parsing (?)
         out['Links'] = self._get_gplink(entry) # [{'IsEnforced': False, 'GUID': ''}] 
         out['Trusts'] = [] 
@@ -1600,8 +1610,6 @@ class AdDumper:
                 out.append({'ObjectIdentifier': member, 'ObjectType': 'Unknown'})
         return out
 
-        
-        #return [self.bh_member_map[a] for a in ]
 
 
     def bloodhound_map_group(self, entry):
@@ -1644,18 +1652,53 @@ class AdDumper:
         out['Properties'].update(unique_properties)
         del out['Properties']['displayname']
         return out
+    
+
+    def _bh_parse_spn(self, spnentry):
+        p = spnentry.split('/')[1].split(':')
+        name = p[0].lower()
+        port = int(p[1]) if len(p) > 1 and p[1].isdigit() else 1433
+        sids = [self.bh_computer_map[a] for a in self.bh_computer_map.keys() if name in a.split(',')]
+        if len(sids) > 0:
+            return {"ComputerSID": sids[0], "Port": port}
+        else:
+            self.logger.debug('Could not resolve SPN {} to a computer SID'.format(spnentry))
+            return {}
+
+    
+    def _bh_parse_spn_targets(self, spnentry):
+        if 'mssqlsvc' in spnentry.lower():
+            pspn = self._bh_parse_spn(spnentry)
+            if pspn:
+                pspn['Service'] = 'SQLAdmin'
+            return pspn
+        else:
+            return {}
+        
+
+    def _bh_parse_delegation(self, entry):
+        if 'TRUSTED_TO_AUTH_FOR_DELEGATION' in self._fp(entry, 'userAccountControlFlags'):
+            out = []
+            for spnentry in self._fp(entry, 'msDS-AllowedToDelegateTo', []):
+                spn = self._bh_parse_spn(spnentry)
+                if spn and 'ComputerSID' in spn:
+                    if not spn['ComputerSID'] in [a['ObjectIdentifier'] for a in out if 'ObjectIdentifier' in a]:
+                        out.append({'ObjectIdentifier': spn['ComputerSID'], 'ObjectType': 'Computer'})
+            return out
+        else:
+            return []
+
+
 
     def bloodhound_map_user(self, entry):
         '''Maps user entries from dump into a BloodHound compatible format'''
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_USER_KEYS}}
-        out['SPNTargets']
-        out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', [])
-        out['AllowedToDelegate'] = self._fp(entry, 'msDS-AllowedToDelegateTo', [])
+        out['SPNTargets'] = [b for b in [self._bh_parse_spn_targets(a) for a in self._fp(entry, 'servicePrincipalName', [])] if b]
+        out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', []) # TODO: Check this format, think its {'ObjectIdentifier': x, 'ObjectType': 'Computer'} again
+        out['AllowedToDelegate'] = self._bh_parse_delegation(entry) 
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid', '')), self._fp(entry, 'primaryGroupID'))
-        #out['SPNPrivilege'] = [] # TODO, renamed to SPNPrivilege - https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/SPNPrivilege.cs
         out['Properties'].update({a: self._fp(entry, a) for a in BH_USER_PROPERTIES})
         unique_properties = {
-            #'gmsa' : self.get_class(entry).lower() == 'ms-ds-group-managed-service-account',
             'email': self._fp(entry, 'mail'),
             'lastlogontimestamp': self._fp(entry, 'lastLogontimeStamp', -1),
             'lastlogon': (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'lastLogon')),
@@ -1677,6 +1720,8 @@ class AdDumper:
             'logonscript': self._fp(entry,'scriptPath'),
             'sidhistory' : self._fp(entry,'sidHistory', [])
         }
+        if self.get_class(entry).lower() == 'ms-ds-group-managed-service-account':
+            unique_properties['gmsa'] = True
         out['Properties'].update(unique_properties)
         
         return out
@@ -1723,6 +1768,9 @@ class AdDumper:
             self.bh_core_domain = '.'.join([a.replace('DC=', '').upper() for a in self._fp(dump['domains'][0], 'distinguishedName', '').split(',') if a.startswith('DC=')])
         else:
             self.logger.info('No domain info in dump file, this conversion is probably going to fail...')
+
+        if 'computers' in dump:
+            self.bh_computer_map = {','.join([self._fp(a, 'dNSHostName', '').lower(), self._fp(a, 'name', '').lower() ]) : self._fp(a, 'objectSid') for a in dump['computers']}
 
         for key in ['users', 'groups', 'computers']:
             map_cat = lambda x: 'User' if x.split(',')[0].split('=')[-1] == 'Person' else x.split(',')[0].split('=')[-1]
