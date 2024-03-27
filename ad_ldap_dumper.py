@@ -249,6 +249,65 @@ FLAGS = {
         'DCOnly' : (1 << 6) | (1 << 7) | 1 | (1 << 9) | (1 << 5) | (1 << 2) | (1 << 18), # 262885 - ACL | Container | Group | ObjectProps | Trusts | GPOLocalGroup | CertServices,
         'Default' : 1 | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 9) |  20738 | (1 << 13) | (1 << 7) | (1 << 18), # 291819 - Group | Session | Trusts | ACL | ObjectProps | LocalGroups | SPNTargets | Container | CertServices,
         'All' : 291819 | (1 << 4) | (1 << 2) | (1 << 15) | (1 << 16) | (1 << 17) #521215 - Default | LoggedOn | GPOLocalGroup | UserRights | CARegistry | DCRegistry
+    },
+
+    # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-crtd/1192823c-d839-4bc3-9b6b-fa8c53507ae1
+    'msPKI-Certificate-Name-Flag': 
+    {
+        'CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT': 0x00000001,
+        'CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT_ALT_NAME': 0x00010000,
+        'CT_FLAG_SUBJECT_ALT_REQUIRE_DOMAIN_DNS': 0x00400000,
+        'CT_FLAG_SUBJECT_ALT_REQUIRE_SPN': 0x00800000,
+        'CT_FLAG_SUBJECT_ALT_REQUIRE_DIRECTORY_GUID': 0x01000000,
+        'CT_FLAG_SUBJECT_ALT_REQUIRE_UPN': 0x02000000,
+        'CT_FLAG_SUBJECT_ALT_REQUIRE_EMAIL': 0x04000000, 
+        'CT_FLAG_SUBJECT_ALT_REQUIRE_DNS': 0x08000000, 
+        'CT_FLAG_SUBJECT_REQUIRE_DNS_AS_CN': 0x10000000, 
+        'CT_FLAG_SUBJECT_REQUIRE_EMAIL': 0x20000000, 
+        'CT_FLAG_SUBJECT_REQUIRE_COMMON_NAME': 0x40000000, 
+        'CT_FLAG_SUBJECT_REQUIRE_DIRECTORY_PATH': 0x80000000,
+        'CT_FLAG_OLD_CERT_SUPPLIES_SUBJECT_AND_ALT_NAME': 0x00000008
+    },
+
+    # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-crtd/ec71fd43-61c2-407b-83c9-b52272dec8a1
+    'msPKI-Enrollment-Flag': {
+        'CT_FLAG_INCLUDE_SYMMETRIC_ALGORITHMS': 0x00000001, 
+        'CT_FLAG_PEND_ALL_REQUESTS': 0x00000002, 
+        'CT_FLAG_PUBLISH_TO_KRA_CONTAINER': 0x00000004, 
+        'CT_FLAG_PUBLISH_TO_DS': 0x00000008,
+        'CT_FLAG_AUTO_ENROLLMENT_CHECK_USER_DS_CERTIFICATE': 0x00000010,
+        'CT_FLAG_AUTO_ENROLLMENT': 0x00000020,
+        'CT_FLAG_PREVIOUS_APPROVAL_VALIDATE_REENROLLMENT': 0x00000040,
+        'CT_FLAG_USER_INTERACTION_REQUIRED': 0x00000100,
+        'CT_FLAG_REMOVE_INVALID_CERTIFICATE_FROM_PERSONAL_STORE': 0x00000400,
+        'CT_FLAG_ALLOW_ENROLL_ON_BEHALF_OF': 0x00000800,
+        'CT_FLAG_ADD_OCSP_NOCHECK': 0x00001000,
+        'CT_FLAG_ENABLE_KEY_REUSE_ON_NT_TOKEN_KEYSET_STORAGE_FULL': 0x00002000,
+        'CT_FLAG_NOREVOCATIONINFOINISSUEDCERTS': 0x00004000,
+        'CT_FLAG_INCLUDE_BASIC_CONSTRAINTS_FOR_EE_CERTS': 0x00008000,
+        'CT_FLAG_ALLOW_PREVIOUS_APPROVAL_KEYBASEDRENEWAL_VALIDATE_REENROLLMENT': 0x00010000,
+        'CT_FLAG_ISSUANCE_POLICIES_FROM_REQUEST': 0x00020000,
+        'CT_FLAG_SKIP_AUTO_RENEWAL': 0x00040000,
+        'CT_FLAG_NO_SECURITY_EXTENSION': 0x00080000
+    }, 
+
+    # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-crtd/f6122d87-b999-4b92-bff8-f465e8949667
+    # TODO: Not sure if this is correct, might need to & 0x000F0000 with the flag value not the check value
+    'msPKI-Private-Key-Flag': {
+        'CT_FLAG_REQUIRE_PRIVATE_KEY_ARCHIVAL': 0x00000001,
+        'CT_FLAG_EXPORTABLE_KEY': 0x00000010,
+        'CT_FLAG_STRONG_KEY_PROTECTION_REQUIRED': 0x00000020,
+        'CT_FLAG_REQUIRE_ALTERNATE_SIGNATURE_ALGORITHM': 0x00000040,
+        'CT_FLAG_REQUIRE_SAME_KEY_RENEWAL': 0x00000080,
+        'CT_FLAG_USE_LEGACY_PROVIDER': 0x00000100,
+        'CT_FLAG_ATTEST_NONE': 0x00000000 & 0x000F0000, # * 
+        'CT_FLAG_ATTEST_REQUIRED': 0x00002000 & 0x000F0000, # *
+        'CT_FLAG_ATTEST_PREFERRED': 0x00001000 & 0x000F0000, # *
+        'CT_FLAG_ATTESTATION_WITHOUT_POLICY': 0x00004000 & 0x000F0000, # *
+        'CT_FLAG_EK_TRUST_ON_USE': 0x00000200 & 0x000F0000, # *
+        'CT_FLAG_EK_VALIDATE_CERT': 0x00000400 & 0x000F0000, # *
+        'CT_FLAG_EK_VALIDATE_KEY': 0x00000800 & 0x000F0000, # *
+        'CT_FLAG_HELLO_LOGON_KEY': 0x00200000 & 0x000F0000 # *
     }
 
 }
@@ -1475,6 +1534,7 @@ class AdDumper:
         del out['Properties']['displayname']
         return out
 
+    # TODO: incomplete
     # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Processors/LDAPPropertyProcessor.cs#L484
     def bloodhound_map_certtemplate(self, entry):
         domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
@@ -1488,11 +1548,11 @@ class AdDumper:
             'validityperiod' : '', # pKIExpirationPeriod
             'renewalperiod': '', # pKIOverlapPeriod
             'schemaversion' : self._fp(entry, 'msPKI-Template-Schema-Version'), # msPKI-Template-Schema-Version
-            'enrollmentflag': '', #msPKI-Enrollment-Flag "INCLUDE_SYMMETRIC_ALGORITHMS, PUBLISH_TO_DS, AUTO_ENROLLMENT"
+            'enrollmentflag': ', '.join([a.replace('CT_FLAG_', '') for a in self._fp(entry, 'msPKI-Enrollment-FlagFlags', [])]), 
             'oid' : self._fp(entry, 'msPKI-Cert-Template-OID'),
             'requiresmanagerapproval' : False,
             'nosecurityextension' : False,
-            'certificatenameflag': '', # msPKI-Certificate-Name-Flag "SUBJECT_ALT_REQUIRE_UPN, SUBJECT_REQUIRE_DIRECTORY_PATH",
+            'certificatenameflag': ', '.join([a.replace('CT_FLAG_', '') for a in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', [])]), 
             'enrolleesuppliessubject': False,
             'subjectaltrequireupn': True,
             'subjectaltrequiredns': True,
@@ -1500,12 +1560,12 @@ class AdDumper:
             'subjectaltrequireemail': False,
             'subjectaltrequirespn': False,
             'subjectrequireemail': False,
-            'ekus': [ "1.3.6.1.4.1.311.10.3.4"], #pKIExtendedKeyUsage?
+            'ekus': self._fp(entry, 'pKIExtendedKeyUsage'), 
             'certificateapplicationpolicy': [],
             'authorizedsignatures': 0,
             'applicationpolicies': [],
             'issuancepolicies': [],
-            'effectiveekus': [ "1.3.6.1.4.1.311.10.3.4" ], #pKIExtendedKeyUsage? msPKI-Certificate-Application-Policy?
+            'effectiveekus': self._fp(entry, 'pKIExtendedKeyUsage'), #TODO: Confirm this is correct
             'authenticationenabled': False            
         }
         out['Properties'].update(unique_properties)
