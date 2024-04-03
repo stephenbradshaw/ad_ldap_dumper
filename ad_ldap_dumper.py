@@ -10,6 +10,7 @@ import os
 import tempfile
 import random
 import getpass
+import struct
 from functools import reduce
 from binascii import hexlify, unhexlify
 from logging import Logger
@@ -166,7 +167,7 @@ FUNCTIONAL_LEVELS = {
     7: "2016"
 }
 
-
+# used for automated lookups for field parsing based on LDAP entry field name
 LOOKUPS = {
     #https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/5026a939-44ba-47b2-99cf-386a9e674b04
     'trustDirection' : {0 : 'DISABLED', 1: 'INBOUND', 2: 'OUTBOUND', 3: 'BIDIRECTIONAL'},
@@ -176,6 +177,7 @@ LOOKUPS = {
 }
 
 
+# used for automated flag parsing for field parsing based on LDAP entry field name
 FLAGS = {
 
     #https://docs.microsoft.com/en-us/troubleshoot/windows-server/identity/useraccountcontrol-manipulate-account-properties
@@ -219,36 +221,6 @@ FLAGS = {
         'CROSS_ORGANIZATION_NO_TGT_DELEGATION':0x00000200,
         'CROSS_ORGANIZATION_ENABLE_TGT_DELEGATION': 0x00000800,
         'PIM_TRUST':0x00000400
-    },
-
-    # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Enums/CollectionMethods.cs
-    'collectionMethods': 
-    {
-        'None': 0,
-        'Group' : 1,
-        'LocalAdmin': 1 << 1,
-        'GPOLocalGroup': 1 << 2,
-        'Session' : 1 << 3,
-        'LoggedOn' : 1 << 4,
-        'Trusts' : 1 << 5,
-        'ACL' : 1 << 6,
-        'Container' : 1 << 7,
-        'RDP' : 1 << 8,
-        'ObjectProps' : 1 << 9,
-        'SessionLoop' : 1 << 10,
-        'LoggedOnLoop' : 1 << 11,
-        'DCOM' : 1 << 12,
-        'SPNTargets' : 1 << 13,
-        'PSRemote' : 1 << 14,
-        'UserRights' : 1 << 15,
-        'CARegistry' : 1 << 16,
-        'DCRegistry' : 1 << 17,
-        'CertServices' : 1 << 18,
-        'LocalGroups' :  (1 << 12) | (1 << 8) | (1 << 1) | (1 << 14), # 20738 - DCOM | RDP | LocalAdmin | PSRemote,
-        'ComputerOnly' : 20738 | (1 << 3) | (1 << 15) | (1 << 16) | (1 << 17), # 250122 - LocalGroups | Session | UserRights | CARegistry | DCRegistry,
-        'DCOnly' : (1 << 6) | (1 << 7) | 1 | (1 << 9) | (1 << 5) | (1 << 2) | (1 << 18), # 262885 - ACL | Container | Group | ObjectProps | Trusts | GPOLocalGroup | CertServices,
-        'Default' : 1 | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 9) |  20738 | (1 << 13) | (1 << 7) | (1 << 18), # 291819 - Group | Session | Trusts | ACL | ObjectProps | LocalGroups | SPNTargets | Container | CertServices,
-        'All' : 291819 | (1 << 4) | (1 << 2) | (1 << 15) | (1 << 16) | (1 << 17) #521215 - Default | LoggedOn | GPOLocalGroup | UserRights | CARegistry | DCRegistry
     },
 
     # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-crtd/1192823c-d839-4bc3-9b6b-fa8c53507ae1
@@ -300,30 +272,63 @@ FLAGS = {
         'CT_FLAG_REQUIRE_ALTERNATE_SIGNATURE_ALGORITHM': 0x00000040,
         'CT_FLAG_REQUIRE_SAME_KEY_RENEWAL': 0x00000080,
         'CT_FLAG_USE_LEGACY_PROVIDER': 0x00000100,
-        'CT_FLAG_ATTEST_NONE': 0x00000000 & 0x000F0000, # * 
-        'CT_FLAG_ATTEST_REQUIRED': 0x00002000 & 0x000F0000, # *
-        'CT_FLAG_ATTEST_PREFERRED': 0x00001000 & 0x000F0000, # *
-        'CT_FLAG_ATTESTATION_WITHOUT_POLICY': 0x00004000 & 0x000F0000, # *
-        'CT_FLAG_EK_TRUST_ON_USE': 0x00000200 & 0x000F0000, # *
-        'CT_FLAG_EK_VALIDATE_CERT': 0x00000400 & 0x000F0000, # *
-        'CT_FLAG_EK_VALIDATE_KEY': 0x00000800 & 0x000F0000, # *
-        'CT_FLAG_HELLO_LOGON_KEY': 0x00200000 & 0x000F0000 # *
+        'CT_FLAG_ATTEST_NONE': 0x00000000, # * 
+        'CT_FLAG_ATTEST_REQUIRED': 0x00002000, # *
+        'CT_FLAG_ATTEST_PREFERRED': 0x00001000, # *
+        'CT_FLAG_ATTESTATION_WITHOUT_POLICY': 0x00004000, # *
+        'CT_FLAG_EK_TRUST_ON_USE': 0x00000200, # *
+        'CT_FLAG_EK_VALIDATE_CERT': 0x00000400, # *
+        'CT_FLAG_EK_VALIDATE_KEY': 0x00000800, # *
+        'CT_FLAG_HELLO_LOGON_KEY': 0x00200000 # *
+    },
+
+}
+
+
+MANUAL_FLAGS = {
+
+    # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Enums/CollectionMethods.cs
+    'collectionMethods': 
+    {
+        'None': 0,
+        'Group' : 1,
+        'LocalAdmin': 1 << 1,
+        'GPOLocalGroup': 1 << 2,
+        'Session' : 1 << 3,
+        'LoggedOn' : 1 << 4,
+        'Trusts' : 1 << 5,
+        'ACL' : 1 << 6,
+        'Container' : 1 << 7,
+        'RDP' : 1 << 8,
+        'ObjectProps' : 1 << 9,
+        'SessionLoop' : 1 << 10,
+        'LoggedOnLoop' : 1 << 11,
+        'DCOM' : 1 << 12,
+        'SPNTargets' : 1 << 13,
+        'PSRemote' : 1 << 14,
+        'UserRights' : 1 << 15,
+        'CARegistry' : 1 << 16,
+        'DCRegistry' : 1 << 17,
+        'CertServices' : 1 << 18,
+        'LocalGroups' :  (1 << 12) | (1 << 8) | (1 << 1) | (1 << 14), # 20738 - DCOM | RDP | LocalAdmin | PSRemote,
+        'ComputerOnly' : 20738 | (1 << 3) | (1 << 15) | (1 << 16) | (1 << 17), # 250122 - LocalGroups | Session | UserRights | CARegistry | DCRegistry,
+        'DCOnly' : (1 << 6) | (1 << 7) | 1 | (1 << 9) | (1 << 5) | (1 << 2) | (1 << 18), # 262885 - ACL | Container | Group | ObjectProps | Trusts | GPOLocalGroup | CertServices,
+        'Default' : 1 | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 9) |  20738 | (1 << 13) | (1 << 7) | (1 << 18), # 291819 - Group | Session | Trusts | ACL | ObjectProps | LocalGroups | SPNTargets | Container | CertServices,
+        'All' : 291819 | (1 << 4) | (1 << 2) | (1 << 15) | (1 << 16) | (1 << 17) #521215 - Default | LoggedOn | GPOLocalGroup | UserRights | CARegistry | DCRegistry
+    },
+
+    # https://github.com/BloodHoundAD/SharpHoundCommon/blob/80fc5c0deaedf8d39d62c6f85d6fd58fd90a840f/src/CommonLib/Enums/PKICertificateAuthorityFlags.cs
+    'flags': {
+        'NO_TEMPLATE_SUPPORT' : 0x00000001,
+        'SUPPORTS_NT_AUTHENTICATION' : 0x00000002,
+        'CA_SUPPORTS_MANUAL_AUTHENTICATION' : 0x00000004,
+        'CA_SERVERTYPE_ADVANCED' : 0x00000008
     }
 
 }
 
 
-BH_CERTAUTHORITY_KEYS = []
 
-BH_AIACAS_KEYS = []
-
-BH_NTAUTHSTORES_KEYS = []
-
-BH_ROOTCA_KEYS = []
-
-BH_ENTERPRISECA_KEYS = []
-
-BH_CERTTEMPLATE_KEYS = []
 
 BH_CONTAINER_KEYS = [
     'ChildObjects'
@@ -351,11 +356,6 @@ BH_DOMAIN_KEYS = [
     'Trusts'
 ]
 
-BH_GPO_KEYS = []
-
-BH_GROUP_KEYS = [
-]
-
 BH_OU_KEYS = [
     'ChildObjects',
     'GPOChanges',
@@ -377,25 +377,6 @@ BH_COMMON_PROPERTIES = [
     'name',
     'whencreated'
 ]
-
-BH_AIACAS_PROPERTIES = [
-    "crosscertificatepair",
-    "hascrosscertificatepair",
-    "certthumbprint",
-    "certthumbprint",
-    "certname",
-    "certchain",
-    "hasbasicconstraints",
-    "basicconstraintpathlength"
-]
-
-BH_NTAUTHSTORES_PROPERTIES = []
-
-BH_ROOTCA_PROPERTIES = []
-
-BH_ENTERPRISECA_PROPERTIES = []
-
-BH_CERTTEMPLATE_PROPERTIES = []
 
 
 BH_CERTAUTHORITY_PROPERTIES = [
@@ -435,8 +416,6 @@ BH_GROUP_PROPERTIES = [
     'samaccountname'
 ]
 
-BH_OU_PROPERTIES = [
-]
 
 BH_USER_PROPERTIES = [
     'displayname',
@@ -776,12 +755,20 @@ class AdDumper:
 
                 for entry in FLAGS:
                     if entry in orecord:
+                        # msPKI-Private-Key-Flag
                         orecord['{}Flags'.format(entry)] = [a for a in FLAGS[entry] if self.hasFlag(FLAGS[entry][a], orecord[entry])]
 
                 for entry in LOOKUPS:
                     if entry in orecord:
                         orecord['{}Resolved'.format(entry)] = LOOKUPS[entry][orecord[entry]]
-                            
+
+                for entry in ['pKIExpirationPeriod', 'pKIOverlapPeriod']:
+                    if entry in orecord:
+                        if self.raw:
+                            orecord['{}_raw'.format(entry)] = orecord[entry]
+                        orecord[entry] = self._convert_pki_period(orecord[entry])
+
+
                 out.append(orecord)
 
                 # delay between each page of records if sleep is configured
@@ -888,6 +875,11 @@ class AdDumper:
         data = self.parse_records(gen)
         gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data += self.parse_records(gen)
+        # post process flag field value - "flag" field is too generic to do this in shared routine so do it here
+        for record in data:
+            if 'flags' in record:
+                record['flags_raw'] = record['flags']
+                record['flags'] = [a for a in MANUAL_FLAGS['flags'] if self.hasFlag(MANUAL_FLAGS['flags'][a], record['flags'])]
         return data
 
 
@@ -997,7 +989,6 @@ class AdDumper:
 
     def query_users(self, attributes=ldap3.ALL_ATTRIBUTES):
         self.logger.info('Querying user objects from LDAP')
-        #query = '(&(objectClass=user)(objectCategory=person))' if not self.alt_query else '(objectCategory=person)' #(objectClass=user)
         query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)))' 
         if self.config and 'users' in self.config:
             query = self.config['users']
@@ -1130,6 +1121,36 @@ class AdDumper:
                             self.logger.debug('Post processing of field {} in key {} failed with error {}' .format(field, key, e))
                             pass
         return data
+    
+
+    # convert PKI period format, based on bh code from below
+    # https://github.com/BloodHoundAD/SharpHoundCommon/blob/80fc5c0deaedf8d39d62c6f85d6fd58fd90a840f/src/CommonLib/Processors/LDAPPropertyProcessor.cs#L665
+    def _convert_pki_period(self, value):
+        up = struct.unpack('<q', value)[0] * -.0000001
+        if up >= 31536000: # years
+            if up == 31536000:
+                return '1 year'
+            return '{} years'.format(int(up / 31536000))
+        elif up >= 2592000: # months
+            if up == 2592000:
+                return '1 month'
+            return '{} months'.format(int(up / 2592000))
+        elif up >= 604800: # weeks 
+            if up == 604800:
+                return '1 week'
+            return '{} weeks'.format(int(up / 604800))
+        elif up >= 86400: # day 
+            if up == 86400:
+                return '1 day'
+            return '{} days'.format(timedelta(seconds=up).days)
+        elif up >= 3600: # hours 
+            if up == 3600:
+                return '1 hour'
+            return '{} hours'.format(int(up / 3600))
+        else: 
+            return ''
+
+
 
 
     def _fp(self, obj, name, default=None):
@@ -1256,14 +1277,6 @@ class AdDumper:
                     AllExtendedRights = True
                
                
-                # Think this is wrong
-                # WriteDacl, WriteOwner, GenericWrite, AllExtendedRights - combine this combo into GenericAll if also DELETE
-                # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/990fb975-ab31-4bc1-8b75-5da132cd4584
-                # GenericAll = The right to create or delete child objects, delete a subtree, read and write properties, examine child objects
-                #  and the object itself, add and remove the object from the directory, and read or write with an extended right.
-                #if GenericWrite and WriteDacl and WriteOwner and AllExtendedRights and 'DELETE' in dacl['Privs']:
-                #    out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericAll', inherited(dacl)))
-                #    continue
 
                 if GenericWrite:
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericWrite', inherited(dacl)))
@@ -1276,7 +1289,6 @@ class AdDumper:
 
                 # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Processors/ACLProcessor.cs 
                     
-                # ManageCA, ManageCertificates, Enroll
 
                 if ('ADS_RIGHT_DS_WRITE_PROP' in dacl['Privs'] or GenericWrite) and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags']:
                     if objectClass.lower() == 'group' and dacl['ControlObjectType'] == 'Member':
@@ -1289,7 +1301,6 @@ class AdDumper:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddKeyCredentialLink', inherited(dacl)))
                     elif objectClass.lower() == 'user' and dacl['ControlObjectType'] == 'Service-Principal-Name':
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WriteSPN', inherited(dacl)))
-                    # once certificate stuff collected... PKI-Certificate-Template
                     elif objectClass.lower() == 'pki-certificate-template' and dacl['ControlObjectType'] == 'ms-PKI-Enrollment-Flag':
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WritePKIEnrollmentFlag', inherited(dacl)))
                     elif objectClass.lower() == 'pki-certificate-template' and dacl['ControlObjectType'] == 'ms-PKI-Certificate-Name-Flag':
@@ -1348,13 +1359,6 @@ class AdDumper:
 
                 if 'WRITE_DACL' in dacl['Privs']:
                     WriteDacl = True
-
-
-                # think this was mistaken
-                # WriteDacl, WriteOwner, GenericWrite, AllExtendedRights - combine this combo into GenericAll if also DELETE
-                #if GenericWrite and WriteDacl and WriteOwner and AllExtendedRights and 'DELETE' in dacl['Privs']:
-                #    out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericAll', inherited(dacl)))
-                #    continue
 
                 if GenericWrite:
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericWrite', inherited(dacl)))
@@ -1433,14 +1437,15 @@ class AdDumper:
         return load_certificate(FILETYPE_ASN1, data)
     
     def _parse_cert_info(self, cert):
-        bcdata = [cert.get_extension(a).get_data() for a in range(0, cert.get_extension_count()) if cert.get_extension(a).get_short_name() == b'basicConstraints']
-        bcdata = bcdata[0] if bcdata else b''
-        bc =  False if bcdata != b'\x03\x01\x01\xff' else True # this probably works but not great
+        bcdata = [str(cert.get_extension(a)) for a in range(0, cert.get_extension_count()) if cert.get_extension(a).get_short_name() == b'basicConstraints']
+        bcdata = {a.split(':')[0]: a.split(':')[1] for a in bcdata[0].split(', ')} if len(bcdata) > 0 else {}
+        bcpathlen = int(bcdata.get('pathlen', 0))
         out = {
             'certthumbprint': cert.digest('sha1').decode('utf8').replace(':', ''),
             'certname': cert.digest('sha1').decode('utf8').replace(':', ''),
-            'hasbasicconstraints' : bc,
-            'basicconstraintpathlength' : 0, # TODO: need to fix
+            # the following does not seem to detect whether basicContraints ext is present, but that it has more than just CA field???
+            'hasbasicconstraints' : bool(len([a for a in bcdata if a != 'CA']) > 0), 
+            'basicconstraintpathlength' : bcpathlen, 
             'caname' : [a[1] for a in cert.get_subject().get_components() if a[0] == b'CN'][0]
         }
         return out
@@ -1451,24 +1456,23 @@ class AdDumper:
         certs = [self._parse_cert(unhexlify(a)) for a in self._fp(entry,'cACertificate', [])]
         cert1 = self._parse_cert_info(certs[0])
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_ENTERPRISECA_KEYS}}
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_ENTERPRISECA_PROPERTIES})
+        out = self.bloodhound_map_common(entry)
         unique_properties = {
             'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
             'domain': domainName.upper(),
             'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
-            #"flags": "SUPPORTS_NT_AUTHENTICATION, CA_SERVERTYPE_ADVANCED", flags
-            'dnshostname': self._fp(entry, 'dNSHostName'),
+            'flags': ', '.join(self._fp(entry, 'flags', [])), 
             'caname' : self._fp(entry, 'name'),
-            'certchain': [a.digest('sha1').decode('utf8').replace(':', '') for a in certs],
+            'dnshostname': self._fp(entry, 'dNSHostName'),
             'certthumbprint' : cert1['certthumbprint'],
             'certname': cert1['certname'],
+            'certchain': [a.digest('sha1').decode('utf8').replace(':', '') for a in certs],
             'hasbasicconstraints': cert1['hasbasicconstraints'],
             'basicconstraintpathlength': cert1['basicconstraintpathlength']
         }
         out['Properties'].update(unique_properties)
-        out['HostingComputer'] = None # TODO - looks to be the SID of the computer with the dnshostname
-        out['CARegistryData'] = None # TODO - https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/CARegistryData.cs
+        out['HostingComputer'] = None # TODO - string, looks to be the SID of the computer with the dnshostname, not sure this is in LDAP
+        out['CARegistryData'] = None # TODO -, not sure this is in LDAP https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/CARegistryData.cs
         out['EnabledCertTemplates'] = [self.bh_cert_temp_map[a] for a in self._fp(entry, 'certificateTemplates', [])]
         del out['Properties']['displayname']
         return out
@@ -1479,8 +1483,7 @@ class AdDumper:
         domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
         certs = [self._parse_cert(unhexlify(a)) for a in self._fp(entry,'cACertificate', [])]
         cert1 = self._parse_cert_info(certs[0])
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_AIACAS_KEYS}}
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_AIACAS_PROPERTIES})
+        out = self.bloodhound_map_common(entry)
         unique_properties = {
             'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
             'domain': domainName.upper(),
@@ -1489,7 +1492,7 @@ class AdDumper:
             'certthumbprint' : cert1['certthumbprint'],
             'certname': cert1['certname'],
             'hascrosscertificatepair' : True if 'crossCertificatePair' in entry else False,
-            'crosscertificatepair': self._fp(entry, 'crossCertificatePair', []), # TODO: Will probably need to do parsing here
+            'crosscertificatepair': [self._parse_cert(unhexlify(a)).digest('sha1').decode('utf8').replace(':', '') for a in self._fp(entry,'crossCertificatePair', [])], # TODO: I think this is right 
             'hasbasicconstraints': cert1['hasbasicconstraints'],
             'basicconstraintpathlength': cert1['basicconstraintpathlength']
         }
@@ -1501,8 +1504,7 @@ class AdDumper:
     def bloodhound_map_ntauthstore(self, entry):
         domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
         certs = [self._parse_cert(unhexlify(a)) for a in self._fp(entry,'cACertificate', [])]
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_NTAUTHSTORES_KEYS}}
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_NTAUTHSTORES_PROPERTIES})
+        out = self.bloodhound_map_common(entry)
         unique_properties = {
             'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
             'domain': domainName.upper(),
@@ -1510,15 +1512,16 @@ class AdDumper:
             'certthumbprints': [a.digest('sha1').decode('utf8').replace(':', '') for a in certs]
         }
         out['Properties'].update(unique_properties)
+        out['DomainSID'] = {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else ''
         del out['Properties']['displayname']
         return out
+
 
     def bloodhound_map_rootca(self, entry):
         domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
         certs = [self._parse_cert(unhexlify(a)) for a in self._fp(entry,'cACertificate', [])]
         cert1 = self._parse_cert_info(certs[0])
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_ROOTCA_KEYS}}
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_ROOTCA_PROPERTIES})
+        out = self.bloodhound_map_common(entry)
         unique_properties = {
             'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
             'domain': domainName.upper(),
@@ -1534,23 +1537,26 @@ class AdDumper:
         del out['Properties']['displayname']
         return out
 
-    # TODO: incomplete
+    # TODO: incomplete - some data here https://m365internals.com/2022/11/07/investigating-certificate-template-enrollment-attacks-adcs/
     # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Processors/LDAPPropertyProcessor.cs#L484
+    # https://support.bloodhoundenterprise.io/hc/en-us/articles/22454652589083-CertTemplate
     def bloodhound_map_certtemplate(self, entry):
         domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_CERTTEMPLATE_KEYS}}
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_CERTTEMPLATE_PROPERTIES})
+        out = self.bloodhound_map_common(entry)
+        ap = self._fp(entry, 'msPKI-Certificate-Application-Policy', [])
+        schema = self._fp(entry, 'msPKI-Template-Schema-Version', 0)
+        eku = self._fp(entry, 'pKIExtendedKeyUsage', [])
         unique_properties = {
             'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
             'domain': domainName.upper(),
             'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
             'displayname': self._fp(entry, 'displayName', ''),
-            'validityperiod' : '', # pKIExpirationPeriod
-            'renewalperiod': '', # pKIOverlapPeriod
-            'schemaversion' : self._fp(entry, 'msPKI-Template-Schema-Version'), # msPKI-Template-Schema-Version
+            'validityperiod' : self._fp(entry, 'pKIExpirationPeriod', ''), 
+            'renewalperiod': self._fp(entry, 'pKIOverlapPeriod', ''), 
+            'schemaversion' : schema, 
             'enrollmentflag': ', '.join([a.replace('CT_FLAG_', '') for a in self._fp(entry, 'msPKI-Enrollment-FlagFlags', [])]), 
             'oid' : self._fp(entry, 'msPKI-Cert-Template-OID'),
-            'requiresmanagerapproval' : False,
+            'requiresmanagerapproval' : False, 
             'nosecurityextension' : False,
             'certificatenameflag': ', '.join([a.replace('CT_FLAG_', '') for a in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', [])]), 
             'enrolleesuppliessubject': False,
@@ -1560,12 +1566,12 @@ class AdDumper:
             'subjectaltrequireemail': False,
             'subjectaltrequirespn': False,
             'subjectrequireemail': False,
-            'ekus': self._fp(entry, 'pKIExtendedKeyUsage'), 
-            'certificateapplicationpolicy': [],
+            'ekus': eku, 
+            'certificateapplicationpolicy': ap, 
             'authorizedsignatures': 0,
-            'applicationpolicies': [],
-            'issuancepolicies': [],
-            'effectiveekus': self._fp(entry, 'pKIExtendedKeyUsage'), #TODO: Confirm this is correct
+            'applicationpolicies': self._fp(entry, 'msPKI-RA-Application-Policies', []), 
+            'issuancepolicies': self._fp(entry, 'msPKI-RA-Policies', []), 
+            'effectiveekus':  ap if not (schema == 1 and eku) else eku, 
             'authenticationenabled': False            
         }
         out['Properties'].update(unique_properties)
@@ -1575,7 +1581,6 @@ class AdDumper:
     def bloodhound_map_container(self, entry):
         domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_CONTAINER_KEYS}}
-        #out['Properties'].update({a: self._fp(entry, a) for a in BH_CONTAINER_PROPERTIES})
         out['DomainSID'] = {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
         out['ChildObjects'] = []
         unique_properties = {
@@ -1674,7 +1679,7 @@ class AdDumper:
 
     def bloodhound_map_group(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_GROUP_KEYS}}
+        out = self.bloodhound_map_common(entry)
         out['Properties'].update({a: self._fp(entry, a) for a in BH_GROUP_PROPERTIES})
         out['Members'] = self._bh_map_group_members(entry) 
         out['ObjectIdentifier'] = self._tbs(self._fp(entry, 'objectSid'))
@@ -1688,7 +1693,7 @@ class AdDumper:
 
     def bloodhound_map_gpo(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_GPO_KEYS}}
+        out = self.bloodhound_map_common(entry)
         out['Properties'].update({a: self._fp(entry, a) for a in BH_GPO_PROPERTIES})
         unique_properties = {
             'name' : '{}@{}'.format(self._fp(entry, 'displayName').upper(), domainName),
@@ -1701,7 +1706,6 @@ class AdDumper:
     def bloodhound_map_ou(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_OU_KEYS}}
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_OU_PROPERTIES})
         out['ChildObjects'] = []
         out['GPOChanges'] = {'LocalAdmins': [], 'RemoteDesktopUsers': [], 'DcomUsers': [], 'PSRemoteUsers': [], 'AffectedComputers': []}
         out['Links'] = self._get_gplink(entry) # [{'IsEnforced': False, 'GUID': ''}] 
@@ -1823,7 +1827,7 @@ class AdDumper:
                 methods_included.append(key.capitalize().rstrip('s'))
         if [a for a in dump if a.startswith('cert')]:
             methods_included.append('CertServices')
-        methods = reduce(lambda x, y: x | y,[FLAGS['collectionMethods'][a] for a in methods_included])
+        methods = reduce(lambda x, y: x | y,[MANUAL_FLAGS['collectionMethods'][a] for a in methods_included])
         if 'domains' in dump:
             self.bh_core_domain = '.'.join([a.replace('DC=', '').upper() for a in self._fp(dump['domains'][0], 'distinguishedName', '').split(',') if a.startswith('DC=')])
         else:
