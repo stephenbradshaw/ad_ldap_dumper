@@ -23,8 +23,8 @@ from OpenSSL.crypto import load_certificate, FILETYPE_ASN1
 
 
 # FEATURE: restrict attributes returned based on an analysis of the schema? There might be a relevant option in the Connection for this..
-# TODO: Add option to split output into seperate files based on top level key names?
-# TODO: Optional retrieval and parsing of SACL for admin connections?
+# FEATURE: Add option to split output into seperate files based on top level key names?
+# FEATURE: Optional retrieval and parsing of SACL for admin connections?
 
 # Template for Kerberos config file
 # only needed when DNS not working
@@ -155,6 +155,16 @@ OBJECT_TYPES = {
 
 }
 
+# https://github.com/BloodHoundAD/SharpHoundCommon/blob/80fc5c0deaedf8d39d62c6f85d6fd58fd90a840f/src/CommonLib/Enums/CommonOids.cs#L8
+# https://github.com/BloodHoundAD/SharpHoundCommon/blob/80fc5c0deaedf8d39d62c6f85d6fd58fd90a840f/src/CommonLib/Helpers.cs#L324
+AUTHENTICATION_OIDS = {
+    '1.3.6.1.5.5.7.3.2', # ClientAuthentication,
+    '1.3.6.1.5.2.3.4', # PKINITClientAuthentication,
+    '1.3.6.1.4.1.311.20.2.2', # SmartcardLogon,
+    '2.5.29.37.0' # AnyPurpose
+}
+
+
 # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/564dc969-6db3-49b3-891a-f2f8d0a68a7f
 FUNCTIONAL_LEVELS = {
     0: "2000 Mixed/Native",
@@ -264,7 +274,7 @@ FLAGS = {
     }, 
 
     # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-crtd/f6122d87-b999-4b92-bff8-f465e8949667
-    # TODO: Not sure if this is correct, might need to & 0x000F0000 with the flag value not the check value
+    # FEATURE: Extra processing can be done on the marked entries as per above
     'msPKI-Private-Key-Flag': {
         'CT_FLAG_REQUIRE_PRIVATE_KEY_ARCHIVAL': 0x00000001,
         'CT_FLAG_EXPORTABLE_KEY': 0x00000010,
@@ -915,7 +925,7 @@ class AdDumper:
         return data
 
     def query_domains(self, attributes=ldap3.ALL_ATTRIBUTES):
-        # TODO add a derived domain functional param from msDS-Behavior-Version ?
+        # FEATURE add a derived domain functional param from msDS-Behavior-Version ?
         self.logger.info('Querying domain objects from LDAP')
         query = '(objectClass=domain)'
         if self.config and 'domains' in self.config:
@@ -928,7 +938,7 @@ class AdDumper:
         return data
 
     def query_forests(self, attributes=ldap3.ALL_ATTRIBUTES):
-        # TODO add a derived forest functional param from msDS-Behavior-Version ?
+        # FEATURE add a derived forest functional param from msDS-Behavior-Version ?
         # configurationNamingContext should be under cn=partitions,cn=configuration,dc=domain,dc=local
         self.logger.info('Querying forest objects from LDAP')
         query = '(objectClass=crossRefContainer)'
@@ -1131,24 +1141,24 @@ class AdDumper:
             if up == 31536000:
                 return '1 year'
             return '{} years'.format(int(up / 31536000))
-        if up >= 2592000: # months 2592000
+        if (up % 2592000 == 0 and up / 2592000 >=1): # months 
             if up == 2592000:
                 return '1 month'
             return '{} months'.format(int(up / 2592000))
-        if up >= 604800: # weeks 604800
+        if (up % 604800 == 0 and up / 604800 >=1): # weeks
             if up == 604800:
                 return '1 week'
             return '{} weeks'.format(int(up / 604800))
-        if up >= 86400: # day 
+        if (up % 86400 == 0 and up / 86400 >=1): # day
             if up == 86400:
                 return '1 day'
             return '{} days'.format(timedelta(seconds=up).days)
-        if up >= 3600: # hours 
+        if (up % 3600 == 0 and up / 3600 >=1): # hours
             if up == 3600:
                 return '1 hour'
             return '{} hours'.format(int(up / 3600))
-        else: 
-            return ''
+        
+        return ''
 
 
 
@@ -1271,8 +1281,8 @@ class AdDumper:
                 if 'WRITE_OWNER' in dacl['Privs']:
                     WriteOwner = True
                 
-                # AllExtendedRights - TODO: also apply to cert templates
-                if ('ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() in ['user', 'domain', 'computer']
+                # AllExtendedRights
+                if ('ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() in ['user', 'domain', 'computer', 'pki-certificate-template']
                 and ('ACE_OBJECT_TYPE_PRESENT' not in dacl.get('Ace_Data_Flags', []))):
                     AllExtendedRights = True
                
@@ -1471,8 +1481,8 @@ class AdDumper:
             'basicconstraintpathlength': cert1['basicconstraintpathlength']
         }
         out['Properties'].update(unique_properties)
-        out['HostingComputer'] = None # TODO - string, looks to be the SID of the computer with the dnshostname, not sure this is in LDAP
-        out['CARegistryData'] = None # TODO -, not sure this is in LDAP https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/CARegistryData.cs
+        out['HostingComputer'] = None # CONFIRM - string, looks to be the SID of the computer with the dnshostname, not in LDAP
+        out['CARegistryData'] = None # CONFIRM - not in LDAP https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/OutputTypes/CARegistryData.cs
         out['EnabledCertTemplates'] = [self.bh_cert_temp_map[a] for a in self._fp(entry, 'certificateTemplates', [])]
         del out['Properties']['displayname']
         return out
@@ -1492,7 +1502,7 @@ class AdDumper:
             'certthumbprint' : cert1['certthumbprint'],
             'certname': cert1['certname'],
             'hascrosscertificatepair' : True if 'crossCertificatePair' in entry else False,
-            'crosscertificatepair': [self._parse_cert(unhexlify(a)).digest('sha1').decode('utf8').replace(':', '') for a in self._fp(entry,'crossCertificatePair', [])], # TODO: I think this is right 
+            'crosscertificatepair': [self._parse_cert(unhexlify(a)).digest('sha1').decode('utf8').replace(':', '') for a in self._fp(entry,'crossCertificatePair', [])], # CONFIRM I think this is right 
             'hasbasicconstraints': cert1['hasbasicconstraints'],
             'basicconstraintpathlength': cert1['basicconstraintpathlength']
         }
@@ -1537,7 +1547,8 @@ class AdDumper:
         del out['Properties']['displayname']
         return out
 
-    # TODO: incomplete - some data here https://m365internals.com/2022/11/07/investigating-certificate-template-enrollment-attacks-adcs/
+    # TODO: confirm completenesss -  https://m365internals.com/2022/11/07/investigating-certificate-template-enrollment-attacks-adcs/
+    # https://support.bloodhoundenterprise.io/hc/en-us/articles/22454652589083-CertTemplate
     # https://github.com/BloodHoundAD/SharpHoundCommon/blob/1ccdb773d3af19718f410d9795ca9977019b5a85/src/CommonLib/Processors/LDAPPropertyProcessor.cs#L484
     # https://support.bloodhoundenterprise.io/hc/en-us/articles/22454652589083-CertTemplate
     def bloodhound_map_certtemplate(self, entry):
@@ -1546,6 +1557,7 @@ class AdDumper:
         ap = self._fp(entry, 'msPKI-Certificate-Application-Policy', [])
         schema = self._fp(entry, 'msPKI-Template-Schema-Version', 0)
         eku = self._fp(entry, 'pKIExtendedKeyUsage', [])
+        effectiveekus = ap if not (schema == 1 and eku) else eku
         unique_properties = {
             'name' : '{}@{}'.format(self._fp(entry, 'name').upper(), domainName.upper()),
             'domain': domainName.upper(),
@@ -1556,23 +1568,23 @@ class AdDumper:
             'schemaversion' : schema, 
             'enrollmentflag': ', '.join([a.replace('CT_FLAG_', '') for a in self._fp(entry, 'msPKI-Enrollment-FlagFlags', [])]), 
             'oid' : self._fp(entry, 'msPKI-Cert-Template-OID'),
-            'requiresmanagerapproval' : False, 
-            'nosecurityextension' : False,
+            'requiresmanagerapproval' : 'CT_FLAG_PEND_ALL_REQUESTS' in self._fp(entry, 'msPKI-Enrollment-FlagFlags', []), 
+            'nosecurityextension' : 'CT_FLAG_NO_SECURITY_EXTENSION' in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', []),
             'certificatenameflag': ', '.join([a.replace('CT_FLAG_', '') for a in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', [])]), 
-            'enrolleesuppliessubject': False,
-            'subjectaltrequireupn': True,
-            'subjectaltrequiredns': True,
-            'subjectaltrequiredomaindns': False,
-            'subjectaltrequireemail': False,
-            'subjectaltrequirespn': False,
-            'subjectrequireemail': False,
+            'enrolleesuppliessubject': 'CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT' in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', []),
+            'subjectaltrequireupn': 'CT_FLAG_SUBJECT_ALT_REQUIRE_UPN' in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', []),
+            'subjectaltrequiredns': 'CT_FLAG_SUBJECT_ALT_REQUIRE_DNS' in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', []),
+            'subjectaltrequiredomaindns': 'CT_FLAG_SUBJECT_ALT_REQUIRE_DOMAIN_DNS' in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', []),
+            'subjectaltrequireemail': 'CT_FLAG_SUBJECT_ALT_REQUIRE_EMAIL' in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', []),
+            'subjectaltrequirespn': 'CT_FLAG_SUBJECT_ALT_REQUIRE_SPN' in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', []),
+            'subjectrequireemail': 'CT_FLAG_SUBJECT_REQUIRE_EMAIL' in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', []),
             'ekus': eku, 
             'certificateapplicationpolicy': ap, 
-            'authorizedsignatures': 0,
+            'authorizedsignatures': self._fp(entry, 'msPKI-RA-Signature'), 
             'applicationpolicies': self._fp(entry, 'msPKI-RA-Application-Policies', []), 
             'issuancepolicies': self._fp(entry, 'msPKI-RA-Policies', []), 
-            'effectiveekus':  ap if not (schema == 1 and eku) else eku, 
-            'authenticationenabled': False            
+            'effectiveekus':  effectiveekus, 
+            'authenticationenabled': bool(len(effectiveekus) == 0) or bool([a for a in effectiveekus if a in AUTHENTICATION_OIDS])         
         }
         out['Properties'].update(unique_properties)
         return out
@@ -1608,18 +1620,18 @@ class AdDumper:
     def bloodhound_map_computer(self, entry):
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_COMPUTER_KEYS}}
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid')), self._fp(entry, 'primaryGroupID'))
-        out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', [])
+        out['HasSIDHistory'] = [{'ObjectIdentifier': a, 'ObjectType': 'Computer'} for a in self._fp(entry, 'sIDHistory', [])]
         out['AllowedToDelegate'] = self._bh_parse_delegation(entry) 
         out['Status'] = None # can you connect to computer, probably not suitable for this tool but if not null format is { "Connectable": false, "Error": "PwdLastSetOutOfRange" }
         out['AllowedToAct'] = self._bh_parse_allowed_to_act(entry)
         out['IsDC'] = 'SERVER_TRUST_ACCOUNT' in self._fp(entry, 'userAccountControlFlags', [])
         out['DumpSMSAPassword'] = [] # Standalone Managed Service Account, requires LSA secret dumping on local machine
-        out['LocalGroups'] = []
-        out['UserRights'] = []
+        out['LocalGroups'] = [] # requires LSA
+        out['UserRights'] = [] # requires LSA
         out['DomainSID'] = self.get_domain_sid(self._fp(entry, 'objectSid'))
-        out['DCRegistryData'] = { "CertificateMappingMethods": None, "StrongCertificateBindingEnforcement": None  }
+        out['DCRegistryData'] = { "CertificateMappingMethods": None, "StrongCertificateBindingEnforcement": None  } # requires LSA
         for key in ['Sessions', 'PrivilegedSessions', 'RegistrySessions']:
-            out[key] = {'Results': [],'Collected': False, 'FailureReason': None}
+            out[key] = {'Results': [],'Collected': False, 'FailureReason': None} # requires LSA
 
         out['Properties'].update({a: self._fp(entry, a) for a in BH_COMPUTER_PROPERTIES})
         unique_properties = {
@@ -1758,7 +1770,7 @@ class AdDumper:
         '''Maps user entries from dump into a BloodHound compatible format'''
         out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_USER_KEYS}}
         out['SPNTargets'] = [b for b in [self._bh_parse_spn_targets(a) for a in self._fp(entry, 'servicePrincipalName', [])] if b]
-        out['HasSIDHistory'] = self._fp(entry, 'sIDHistory', []) # TODO: Check this format, think its {'ObjectIdentifier': x, 'ObjectType': 'Computer'} again
+        out['HasSIDHistory'] = [{'ObjectIdentifier': a, 'ObjectType': 'User'} for a in self._fp(entry, 'sIDHistory', [])] # CONFIRM: think this is correct
         out['AllowedToDelegate'] = self._bh_parse_delegation(entry) 
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid', '')), self._fp(entry, 'primaryGroupID'))
         out['Properties'].update({a: self._fp(entry, a) for a in BH_USER_PROPERTIES})
@@ -1776,7 +1788,7 @@ class AdDumper:
             'enabled': False if 'ACCOUNTDISABLE' in self._fp(entry, 'userAccountControlFlags', []) else True,
             'trustedtoauth': True if 'TRUSTED_TO_AUTH_FOR_DELEGATION' in self._fp(entry, 'userAccountControlFlags', []) else False,
             'serviceprincipalnames': self._fp(entry, 'servicePrincipalName', []),
-            'hasspn': True if self._fp(entry, 'servicePrincipalName', []) else False,
+            'hasspn': bool(self._fp(entry, 'servicePrincipalName', [])),
             'unixpassword': self._fp(entry,'unixUserPassword'),
             'unicodepassword': self._fp(entry,'unicodePwd'),
             'userpassword': self._fp(entry,'userPassword'),
