@@ -22,7 +22,7 @@ from impacket.uuid import bin_to_string
 from OpenSSL.crypto import load_certificate, FILETYPE_ASN1
 
 
-# TODO: restrict attributes returned based on an analysis of the schema? There might be a relevant option in the Connection for this..
+# FEATURE: restrict attributes returned based on an analysis of the schema? There might be a relevant option in the Connection for this..
 # TODO: Add option to split output into seperate files based on top level key names?
 # TODO: Optional retrieval and parsing of SACL for admin connections?
 
@@ -1127,23 +1127,23 @@ class AdDumper:
     # https://github.com/BloodHoundAD/SharpHoundCommon/blob/80fc5c0deaedf8d39d62c6f85d6fd58fd90a840f/src/CommonLib/Processors/LDAPPropertyProcessor.cs#L665
     def _convert_pki_period(self, value):
         up = struct.unpack('<q', value)[0] * -.0000001
-        if up >= 31536000: # years
+        if (up % 31536000 == 0 and up / 31536000 >=1): # years 
             if up == 31536000:
                 return '1 year'
             return '{} years'.format(int(up / 31536000))
-        elif up >= 2592000: # months
+        if up >= 2592000: # months 2592000
             if up == 2592000:
                 return '1 month'
             return '{} months'.format(int(up / 2592000))
-        elif up >= 604800: # weeks 
+        if up >= 604800: # weeks 604800
             if up == 604800:
                 return '1 week'
             return '{} weeks'.format(int(up / 604800))
-        elif up >= 86400: # day 
+        if up >= 86400: # day 
             if up == 86400:
                 return '1 day'
             return '{} days'.format(timedelta(seconds=up).days)
-        elif up >= 3600: # hours 
+        if up >= 3600: # hours 
             if up == 3600:
                 return '1 hour'
             return '{} hours'.format(int(up / 3600))
