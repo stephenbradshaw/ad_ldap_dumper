@@ -11,6 +11,7 @@ import tempfile
 import random
 import getpass
 import struct
+import typing
 from functools import reduce
 from binascii import hexlify, unhexlify
 from logging import Logger
@@ -836,7 +837,7 @@ class AdDumper:
         return data
 
 
-    def custom_query(self, query, attributes=ldap3.ALL_ATTRIBUTES, parse_records=True, controls=None):
+    def custom_query(self, query: str, attributes: str=ldap3.ALL_ATTRIBUTES, parse_records: bool=True, controls: bool=None) -> list:
         self.logger.info('Running custom query against LDAP')
         self.logger.debug('Query: {}'.format(query))
         if isinstance(controls, type(None)):
@@ -848,7 +849,7 @@ class AdDumper:
         return gen
 
 
-    def _query_certcontainers(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def _query_certcontainers(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         data = []
         if not self.config_containers_collected:
             self.logger.info('Querying configuration conatiner objects from LDAP')
@@ -856,35 +857,33 @@ class AdDumper:
                 query = '(|(objectClass=container)(objectClass=configuration))'
                 if self.config and 'containers' in self.config:
                     query = self.config['containers']
-                gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
+                gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
                 data = self.parse_records(gen)
                 self.config_containers_collected = True
         return data
 
 
 
-    def query_certauthorities(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_certauthorities(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying certauthority objects from LDAP')
         query = '(objectClass=certificationAuthority)'
         if self.config and 'certauthorities' in self.config:
             query = self.config['certauthorities']
             self.logger.debug('Query override from config file: {}'.format(query))
         # forcing base to CN=Configuration is the only way Ive been able to get PKI related items to work, not sure if theres a betetr way
-        gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
+        gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         return data
 
 
-    def query_certenrollservices(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_certenrollservices(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying certenrollservice objects from LDAP')
         query = '(objectClass=pKIEnrollmentService)'
         if self.config and 'certenrollservice' in self.config:
             query = self.config['certenrollservice']
             self.logger.debug('Query override from config file: {}'.format(query))
-        gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
+        gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
-        gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
-        data += self.parse_records(gen)
         # post process flag field value - "flag" field is too generic to do this in shared routine so do it here
         for record in data:
             if 'flags' in record:
@@ -893,17 +892,17 @@ class AdDumper:
         return data
 
 
-    def query_certtemplates(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_certtemplates(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying certtemplate objects from LDAP')
         query = '(objectClass=pKICertificateTemplate)'
         if self.config and 'certtemplates' in self.config:
             query = self.config['certtemplates']
             self.logger.debug('Query override from config file: {}'.format(query))
-        gen = self.connection.extend.standard.paged_search('CN=Configuration,{}'.format(self.root), query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
+        gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         return data
 
-    def query_containers(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_containers(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying container objects from LDAP')
         query = '(objectClass=container)'
         if self.config and 'containers' in self.config:
@@ -913,7 +912,7 @@ class AdDumper:
         data = self.parse_records(gen)
         return data
 
-    def query_computers(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_computers(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying computer objects from LDAP')
         query = '(objectCategory=computer)'
         if self.config and 'computers' in self.config:
@@ -924,7 +923,7 @@ class AdDumper:
         self.update_sidlt(data)
         return data
 
-    def query_domains(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_domains(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         # FEATURE add a derived domain functional param from msDS-Behavior-Version ?
         self.logger.info('Querying domain objects from LDAP')
         query = '(objectClass=domain)'
@@ -937,7 +936,7 @@ class AdDumper:
         self.domainLTNB = {a['objectSid']: a['name'].upper() for a in data}
         return data
 
-    def query_forests(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_forests(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         # FEATURE add a derived forest functional param from msDS-Behavior-Version ?
         # configurationNamingContext should be under cn=partitions,cn=configuration,dc=domain,dc=local
         self.logger.info('Querying forest objects from LDAP')
@@ -949,7 +948,7 @@ class AdDumper:
         data = self.parse_records(gen)
         return data
 
-    def query_gpos(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_gpos(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying GPO objects from LDAP')
         query = '(objectClass=groupPolicyContainer)'
         if self.config and 'gpos' in self.config:
@@ -960,7 +959,7 @@ class AdDumper:
 
 
     # query for security groups only (|(sAMAccountType=268435456)(sAMAccountType=536870912)) 
-    def query_groups(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_groups(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying group objects from LDAP')
         query = '(objectClass=group)' # if not self.alt_query else '(objectCategory=group)'
         if self.config and 'groups' in self.config:
@@ -971,7 +970,7 @@ class AdDumper:
         self.update_sidlt(data)
         return data
 
-    def query_ous(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_ous(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying OU objects from LDAP')
         query = '(objectClass=organizationalUnit)'
         if self.config and 'ous' in self.config:
@@ -980,7 +979,7 @@ class AdDumper:
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         return self.parse_records(gen)
 
-    def query_trusted_domains(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_trusted_domains(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying trusted domain objects from LDAP')
         query = '(objectClass=trustedDomain)' # if not self.alt_query else '(objectCategory=trustedDomain)'
         if self.config and 'trusted_domains' in self.config:
@@ -997,7 +996,7 @@ class AdDumper:
 
         return data
 
-    def query_users(self, attributes=ldap3.ALL_ATTRIBUTES):
+    def query_users(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying user objects from LDAP')
         query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)))' 
         if self.config and 'users' in self.config:
@@ -1008,12 +1007,14 @@ class AdDumper:
         self.update_sidlt(data)
         return data
         
-    def query_info(self):
+    def query_info(self) -> dict:
         '''This one runs on anonymous binds'''
         self.logger.info('Querying server information from LDAP')
         info = self.server.info.__dict__
         del(info['raw'])
         info['other'] = dict(info['other'])
+        if not 'TRUE' in self.server.info.other.get('isGlobalCatalogReady'):
+            self.logger.info('WARNING: Server is not a global catalog, results may be incomplete...')
         return info
 
 
@@ -1066,9 +1067,18 @@ class AdDumper:
                         self.logger.debug('Adding {} seconds of jitter to delay'.format(myjit))
                     self.logger.info('Sleeping for {} seconds between queries as per configured setting'.format(mydelay))
                     time.sleep(mydelay)
-                if not method in out:
-                    out[method] = []
-                out[method] += getattr(self, 'query_{}'.format(method))()
+                method_call = getattr(self, 'query_{}'.format(method))
+                method_return = typing.get_type_hints(method_call).get('return')
+                if method_return == list:
+                    if not method in out:
+                        out[method] = []
+                    out[method] += method_call()
+                elif method_return == dict:
+                    if not method in out:
+                        out[method] = {}
+                    out[method].update(method_call())
+                else:
+                    out[method] = method_call()
                 if method.startswith('cert') and len(out[method]) > 0:
                     if not 'containers' in out:
                         out['containers'] = []
