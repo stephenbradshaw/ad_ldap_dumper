@@ -858,8 +858,8 @@ class AdDumper:
     def _query_certcontainers(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         data = []
         if not self.config_containers_collected:
-            self.logger.info('Querying configuration conatiner objects from LDAP')
             if 'containers' in self.methods:
+                self.logger.info('Querying configuration container objects from LDAP')
                 query = '(|(objectClass=container)(objectClass=configuration))'
                 if self.config and 'containers' in self.config:
                     query = self.config['containers']

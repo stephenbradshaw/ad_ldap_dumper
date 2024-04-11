@@ -7,7 +7,7 @@ Originally written because I wanted something that worked from *nix systems, whi
 
 This tool also allows me to very strictly control how and what LDAP queries are executed for environments that have LDAP query based detections/alerting in place.
 
-In its current state, this tool writes its output to a single large indented JSON file. Im working on adding the option for output in a BloodHound compatible format, but this is only partly implemented at this point in time.
+In its current state, this tool writes its output to a single large indented JSON file. There is also `BETA` level support for converting the output to Bloodhound format, discussed below.
 
 # Requirements
 
@@ -31,6 +31,9 @@ The `ssl` option is available to use SSL for the LDAP connection for servers tha
 # Information collected
 
 The tool collects information on the following categories of objects. The LDAP query used by default for each category is provided:
+* certauthorities - (objectClass=certificationAuthority)
+* certenrollservices - (objectClass=pKIEnrollmentService)
+* certtemplates - (objectClass=pKICertificateTemplate)
 * containers - (objectClass=container)
 * computers - (objectClass=computer)
 * domains - (objectClass=domain)
@@ -39,8 +42,11 @@ The tool collects information on the following categories of objects. The LDAP q
 * groups - (objectClass=group)
 * ous - (objectClass=organizationalUnit)
 * trusted_domains - (objectClass=trustedDomain)
-* users - (&(objectClass=user)(objectCategory=person))
+* users - (&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)))
 * info - server.info as available to anonymous binds
+
+If any of the certificate categories are collected, the following query will also be run in the configuration naming context to obtain certificate object parent containers:
+* containers (|(objectClass=container)(objectClass=configuration))
 
 All the attributes that the user you connect with can see will be collected for each object. Attribute names are case sensitive, and largely match the LDAP names. 
 
@@ -92,6 +98,19 @@ Heres a very simple example file:
 ```
 {"users": "(objectClass=user)"}
 ```
+
+
+# Bloodhound output
+
+The tool now has `BETA` level support for Bloodhound output. 
+
+The best approach to use for the moment while any kinks in the output are resolved is to run the tool as normal, outputting to json, and then converting the contents to Bloodhound output.
+
+For an example output file of `20240410185809_192.168.1.100_AD_Dump.json`, you can do the conversion like so:
+
+    ./ad_ldap_dumper.py -b -loglevel DEBUG -i 20240410185809_192.168.1.100_AD_Dump.json
+
+The individual Bloodhound output files will be written individually to the present working directory (these files will not be added to a zip archive like SharpHound does).
 
 
 # Global Catalog Servers
