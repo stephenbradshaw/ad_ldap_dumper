@@ -664,6 +664,12 @@ class AdDumper:
 
         if not bindresult:
             raise Exception('An error occurred when attempting to bind to the LDAP server: {}'.format(', '.join(['{} : {}' .format(a, self.connection.result[a]) for a in  self.connection.result])))
+        
+        # Check to see if server is a Global Catalog server
+        if not 'TRUE' in self.server.info.other.get('isGlobalCatalogReady'):
+            self.logger.warning('WARNING: Server is not a global catalog, results may be incomplete...')
+        else:
+            self.logger.info('Target server is a Global Catalog server')
         self.root = self.server.info.other['defaultNamingContext'][0]
     
 
@@ -1013,8 +1019,6 @@ class AdDumper:
         info = self.server.info.__dict__
         del(info['raw'])
         info['other'] = dict(info['other'])
-        if not 'TRUE' in self.server.info.other.get('isGlobalCatalogReady'):
-            self.logger.info('WARNING: Server is not a global catalog, results may be incomplete...')
         return info
 
 

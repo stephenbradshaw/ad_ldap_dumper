@@ -94,3 +94,23 @@ Heres a very simple example file:
 ```
 
 
+# Global Catalog Servers
+
+You should be querying a Global Catalog LDAP server in order to maximise the quantity/quality of information collected. Theres a few ways to identify Global Catalog servers:
+
+Do an NSLookup against the domains DNS servers for `gc._msdcs.<domain_name>`. For example for domain `example.com`.
+
+    dig gc._msdcs.example.com
+
+
+Do a SRV lookup for `_gc._tcp.<domain_name>`. For domain `example.com`.
+
+    dig SRV _gc._tcp.example.com
+
+
+The tool will now also warn you if you are NOT talking to a Global Catalog by checking the `info.other.isGlobalCatalogReady` property during connection. You can do this using anonymous binds (e.g. without authentication). If you bump the loglevel to at least `INFO` the tool will also specifically tell you that the server is a Global Catalog or not.
+
+Something like the following is a lightweight approach (e.g. minimally invasive on the target server) that will allow you to work out if a given server `192.168.1.100` is a Global Catalog server or not.
+
+    ./ad_ldap_dumper.py -d 192.168.1.100 -methods info -loglevel INFO
+
