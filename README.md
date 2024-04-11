@@ -65,10 +65,13 @@ The LDAP schema is also queried by default to help with some of the internal loo
 
 The output will be stored in an automatically named json file, unless an output filename is provided with `-o`. There are options to increase logging level (`-loglevel`) and exclude raw output for fields that the tool does parsing on (`-exclude-raw`).
 
-There is an option there to output in a Bloodhound compatible format, but its **CURRENTLY IMCOMPLETE** due to the amount of work required and the fact that I mainly use the JSON. Pull requests welcome.
+There is a (`BETA` quality) option there to output in a Bloodhound compatible format, discussed below.
 
 The JSON represents an object with the following high level keys by default (although this can change when run with non default options):
 * schema
+* certauthorities
+* certenrollservices
+* certtemplates
 * containers
 * computers
 * domains
