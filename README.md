@@ -104,9 +104,9 @@ Heres a very simple example file:
 
 The tool now has `BETA` level support for Bloodhound output. 
 
-The best approach to use for the moment while any kinks in the output are resolved is to run the tool as normal, outputting to json, and then converting the contents to Bloodhound output.
+The best approach to use for the moment while any kinks in the output are resolved is to run the tool as normal, outputting to json, and then converting the contents to Bloodhound output as a seperate step.
 
-For an example output file of `20240410185809_192.168.1.100_AD_Dump.json`, you can do the conversion like so:
+For an example output file of `20240410185809_192.168.1.100_AD_Dump.json` created using a normal execution of the tool, you can do the conversion by running the tool similar to the following:
 
     ./ad_ldap_dumper.py -b -loglevel DEBUG -i 20240410185809_192.168.1.100_AD_Dump.json
 
