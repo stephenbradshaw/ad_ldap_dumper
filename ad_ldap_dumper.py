@@ -1004,7 +1004,7 @@ class AdDumper:
 
     def query_users(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying user objects from LDAP')
-        query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)))' 
+        query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-ManagedServiceAccount)))' 
         if self.config and 'users' in self.config:
             query = self.config['users']
             self.logger.debug('Query override from config file: {}'.format(query))

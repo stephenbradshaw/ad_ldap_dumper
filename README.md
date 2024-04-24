@@ -42,7 +42,7 @@ The tool collects information on the following categories of objects. The LDAP q
 * groups - (objectClass=group)
 * ous - (objectClass=organizationalUnit)
 * trusted_domains - (objectClass=trustedDomain)
-* users - (&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)))
+* users - (&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-ManagedServiceAccount)))
 * info - server.info as available to anonymous binds
 
 If any of the certificate categories are collected, the following query will also be run in the configuration naming context to obtain certificate object parent containers:
