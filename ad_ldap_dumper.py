@@ -609,8 +609,10 @@ class AdDumper:
             'S-1-5-32-577': ['RDS Management Servers', 'Group'],
             'S-1-5-32-578': ['Hyper-V Administrators', 'Group'],
             'S-1-5-32-579': ['Access Control Assistance Operators', 'Group'],
-            'S-1-5-32-580': ['Access Control Assistance Operators', 'Group'],
-            'S-1-5-32-582': ['Storage Replica Administrators', 'Group']
+            'S-1-5-32-580': ['Remote Management Users', 'Group'],
+            'S-1-5-32-581': ['Default Account', 'Group'],
+            'S-1-5-32-582': ['Storage Replica Administrators', 'Group'],
+            'S-1-5-32-583': ['Device Owners', 'Group']
         }
 
 
@@ -1004,7 +1006,7 @@ class AdDumper:
 
     def query_users(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying user objects from LDAP')
-        query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-ManagedServiceAccount)))' 
+        query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-GroupManagedServiceAccount)))' 
         if self.config and 'users' in self.config:
             query = self.config['users']
             self.logger.debug('Query override from config file: {}'.format(query))
