@@ -593,7 +593,7 @@ class AdDumper:
             'S-1-5-32-552': ['Replicators', 'Group'],
             'S-1-5-32-554': ['Pre-Windows 2000 Compatible Access', 'Group'],
             'S-1-5-32-555': ['Remote Desktop Users', 'Group'],
-            'S-1-5-32-556': ['Network Configuration Operators', 'Group'],
+            'S-1-5-32-556': ['Network ConfiguratiManagedServiceAccountn Operators', 'Group'],
             'S-1-5-32-557': ['Incoming Forest Trust Builders', 'Group'],
             'S-1-5-32-558': ['Performance Monitor Users', 'Group'],
             'S-1-5-32-559': ['Performance Log Users', 'Group'],
@@ -1006,7 +1006,7 @@ class AdDumper:
 
     def query_users(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying user objects from LDAP')
-        query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-GroupManagedServiceAccount)))' 
+        query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-ManagedServiceAccount)))' 
         if self.config and 'users' in self.config:
             query = self.config['users']
             self.logger.debug('Query override from config file: {}'.format(query))
