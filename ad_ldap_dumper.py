@@ -42,6 +42,13 @@ KRB_CONF_TEMPLATE = '''
 #dns_canonicalize_hostname = false
 #canonicalize = true
 
+# required attributes used by the tool
+MINIMUM_ATTRIBUTES = [
+    'objectSid',
+    'distinguishedName',
+    'name'
+]
+
 
 # https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/1522b774-6464-41a3-87a5-1e5633c3fbbb
 # https://docs.microsoft.com/en-au/windows/win32/adschema/classes-all?redirectedfrom=MSDN
@@ -457,7 +464,7 @@ BH_USER_PROPERTIES = [
 
 class AdDumper:
 
-    def __init__(self, host=None, target_ip=None, username=None, password=None, ssl=False, sslprotocol=None, port=None, delay=0, jitter=0, paged_size=500, logger=Logger, raw=False, kerberos=False, no_password=False, query_config=None, import_mode=False):
+    def __init__(self, host=None, target_ip=None, username=None, password=None, ssl=False, sslprotocol=None, port=None, delay=0, jitter=0, paged_size=500, logger=Logger, raw=False, kerberos=False, no_password=False, query_config=None, import_mode=False, attributes=ldap3.ALL_ATTRIBUTES):
         self.logger = logger
         self.host = host
         self.kerberos = kerberos
@@ -545,6 +552,7 @@ class AdDumper:
 
         self.methods = []
         self.config_containers_collected = False
+        self.attributes = attributes
 
         # start with well known SIDS https://learn.microsoft.com/en-us/windows/win32/secauthz/well-known-sids
         self.sidLT = {
@@ -863,8 +871,8 @@ class AdDumper:
             if 'containers' in self.methods:
                 self.logger.info('Querying configuration container objects from LDAP')
                 query = '(|(objectClass=container)(objectClass=configuration))'
-                if self.config and 'containers' in self.config:
-                    query = self.config['containers']
+                method_name = 'containers'
+                query, attributes = self._configure_query(method_name, query, attributes)
                 gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
                 data = self.parse_records(gen)
                 self.config_containers_collected = True
@@ -875,9 +883,8 @@ class AdDumper:
     def query_certauthorities(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying certauthority objects from LDAP')
         query = '(objectClass=certificationAuthority)'
-        if self.config and 'certauthorities' in self.config:
-            query = self.config['certauthorities']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         # forcing base to CN=Configuration is the only way Ive been able to get PKI related items to work, not sure if theres a betetr way
         gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
@@ -887,9 +894,8 @@ class AdDumper:
     def query_certenrollservices(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying certenrollservice objects from LDAP')
         query = '(objectClass=pKIEnrollmentService)'
-        if self.config and 'certenrollservice' in self.config:
-            query = self.config['certenrollservice']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         # post process flag field value - "flag" field is too generic to do this in shared routine so do it here
@@ -903,9 +909,8 @@ class AdDumper:
     def query_certtemplates(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying certtemplate objects from LDAP')
         query = '(objectClass=pKICertificateTemplate)'
-        if self.config and 'certtemplates' in self.config:
-            query = self.config['certtemplates']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         return data
@@ -913,9 +918,8 @@ class AdDumper:
     def query_containers(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying container objects from LDAP')
         query = '(objectClass=container)'
-        if self.config and 'containers' in self.config:
-            query = self.config['containers']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         return data
@@ -923,9 +927,8 @@ class AdDumper:
     def query_computers(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying computer objects from LDAP')
         query = '(objectCategory=computer)'
-        if self.config and 'computers' in self.config:
-            query = self.config['computers']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         self.update_sidlt(data)
@@ -935,9 +938,8 @@ class AdDumper:
         # FEATURE add a derived domain functional param from msDS-Behavior-Version ?
         self.logger.info('Querying domain objects from LDAP')
         query = '(objectClass=domain)'
-        if self.config and 'domains' in self.config:
-            query = self.config['domains']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         self.domainLT = {a['objectSid']: '.'.join([b.split('=')[1].upper() for b in a['distinguishedName'].split(',')]) for a in data}
@@ -949,9 +951,8 @@ class AdDumper:
         # configurationNamingContext should be under cn=partitions,cn=configuration,dc=domain,dc=local
         self.logger.info('Querying forest objects from LDAP')
         query = '(objectClass=crossRefContainer)'
-        if self.config and 'forests' in self.config:
-            query = self.config['forests']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         return data
@@ -959,9 +960,8 @@ class AdDumper:
     def query_gpos(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying GPO objects from LDAP')
         query = '(objectClass=groupPolicyContainer)'
-        if self.config and 'gpos' in self.config:
-            query = self.config['gpos']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True) # domainPolicy
         return self.parse_records(gen)
 
@@ -970,9 +970,8 @@ class AdDumper:
     def query_groups(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying group objects from LDAP')
         query = '(objectClass=group)' # if not self.alt_query else '(objectCategory=group)'
-        if self.config and 'groups' in self.config:
-            query = self.config['groups']  
-            self.logger.debug('Query override from config file: {}'.format(query))      
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)     
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         self.update_sidlt(data)
@@ -981,18 +980,16 @@ class AdDumper:
     def query_ous(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying OU objects from LDAP')
         query = '(objectClass=organizationalUnit)'
-        if self.config and 'ous' in self.config:
-            query = self.config['ous']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         return self.parse_records(gen)
 
     def query_trusted_domains(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying trusted domain objects from LDAP')
         query = '(objectClass=trustedDomain)' # if not self.alt_query else '(objectCategory=trustedDomain)'
-        if self.config and 'trusted_domains' in self.config:
-            query = self.config['trusted_domains']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
         for index in range(0, len(data)):            
@@ -1007,21 +1004,31 @@ class AdDumper:
     def query_users(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying user objects from LDAP')
         query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-ManagedServiceAccount)))' 
-        if self.config and 'users' in self.config:
-            query = self.config['users']
-            self.logger.debug('Query override from config file: {}'.format(query))
+        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = data = self.parse_records(gen)
         self.update_sidlt(data)
         return data
         
-    def query_info(self) -> dict:
+    def query_info(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> dict:
         '''This one runs on anonymous binds'''
         self.logger.info('Querying server information from LDAP')
         info = self.server.info.__dict__
         del(info['raw'])
         info['other'] = dict(info['other'])
         return info
+
+    def _configure_query(self, method_name, query, attributes):
+        if self.config and method_name in self.config:
+            if 'query' in self.config[method_name]:
+                query = self.config[method_name]['query']
+                self.logger.debug('Query override for method "{}" from config file: {}'.format(method_name, query))
+            if 'attributes' in self.config[method_name]:
+                attributes = self.config[method_name]['attributes']
+                self.logger.debug('Attributes override for method "{}" from config file: {}'.format(method_name, ','.join(attributes)))
+                attributes += [a for a in MINIMUM_ATTRIBUTES if a.lower() not in [b.lower() for b in attributes]]
+        return query, attributes
 
 
     #classSchema is object type of defined objects, fields mayContain mustContain systemMayContain systemMustContain have the associated attributes
@@ -1078,13 +1085,13 @@ class AdDumper:
                 if method_return == list:
                     if not method in out:
                         out[method] = []
-                    out[method] += method_call()
+                    out[method] += method_call(attributes=self.attributes)
                 elif method_return == dict:
                     if not method in out:
                         out[method] = {}
-                    out[method].update(method_call())
+                    out[method].update(method_call(attributes=self.attributes))
                 else:
-                    out[method] = method_call()
+                    out[method] = method_call(attributes=self.attributes)
                 if method.startswith('cert') and len(out[method]) > 0:
                     if not 'containers' in out:
                         out['containers'] = []
@@ -1127,7 +1134,7 @@ class AdDumper:
                         data[key][index][sd] = parsed
 
                 if 'domains' not in key:
-                    if 'objectSid' in data[key][index]:
+                    if 'objectSid' in data[key][index] and data[key][index]['objectSid']:
                         domainsid = self.get_domain_sid(data[key][index]['objectSid'])
                         if domainsid in self.domainLT:
                             data[key][index]['domain'] = self.domainLT[domainsid]
@@ -1997,7 +2004,8 @@ def command_line():
     input_arg_group.add_argument('-pagesize', type=int, default=500, help='Page size for LDAP requests')
     input_arg_group.add_argument('-custom-query', type=str, default=None, help='Perform custom LDAP query provided as string instead of normal enumeration')
     input_arg_group.add_argument('-port', type=int, default=None, help='Port to connect to. Determined automatically if not specified.')
-    input_arg_group.add_argument('-query-config', type=str, default=None, help='Provide JSON config file that defines custom LDAP queries for each query category')
+    input_arg_group.add_argument('-query-config', type=str, default=None, help='Provide JSON config file that defines custom LDAP queries and attribute lists for each query category, overriding other settings')
+    input_arg_group.add_argument('-attributes', type=str, default=None, help='Provide comma seperated list of object attributes to return for all queries. Best used for custom queries as some attributes are required for normal operation.')
     
     mgroup_schema = input_arg_group.add_mutually_exclusive_group()
     mgroup_schema.add_argument('-only-schema', action='store_true', help='Only perform schema extraction')
@@ -2052,8 +2060,19 @@ def command_line():
                 print('Query config file {} could not be opened with error: {}'.format(args.query_config, e.msg))
         else:
             query_config = None
+
+        if args.attributes:
+            if args.attributes in ['+', '*']:
+                attributes = attributes
+            else:
+                attributes = [a.strip() for a in args.attributes.split(',')]
+                attributes += [a for a in MINIMUM_ATTRIBUTES if a.lower() not in [b.lower() for b in attributes]]
             
-        dumper = AdDumper(args.domain_controller, target_ip=args.target_ip, username=args.username, password=password, ssl=args.ssl, port=args.port, delay=args.sleep, jitter=args.jitter, paged_size=args.pagesize, logger=logger, raw=raw, kerberos=args.kerberos, no_password=args.no_password, query_config=query_config)
+        else:
+            attributes = ldap3.ALL_ATTRIBUTES
+            
+        dumper = AdDumper(args.domain_controller, target_ip=args.target_ip, username=args.username, password=password, ssl=args.ssl, port=args.port, delay=args.sleep, jitter=args.jitter, paged_size=args.pagesize, logger=logger, raw=raw, 
+                          kerberos=args.kerberos, no_password=args.no_password, query_config=query_config, attributes=attributes)
         outputfile = args.output if args.output else '{}_{}_AD_Dump.json'.format(dumper.generate_timestamp(), args.domain_controller)
         valid_methods = dumper.get_valid_methods()
         
@@ -2070,7 +2089,7 @@ def command_line():
 
         dumper.connect()
         if args.custom_query:
-            data = dumper.run_custom_query(args.custom_query)
+            data = dumper.run_custom_query(args.custom_query, attributes=attributes)
         else:
             data = dumper.query(methods=requested_methods, only_schema=args.only_schema, no_schema=args.no_schema)
         if 'meta' in data:

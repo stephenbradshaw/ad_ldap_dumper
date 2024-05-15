@@ -94,13 +94,46 @@ Even when run against small environments, this is **A LOT** of information. You 
 
 The tool includes the option to introduce delays (`-sleep <time_seconds>`), with optional jitter (`-jitter <jitter_max_seconds>`), between each query it performs in order to avoid detection by tools that correlate queries over time from particular sources. 
 
-You can also provide a JSON file specifying custom queries for each category of information (`-query-config <filename>`), if you have specific queries to use instead of the default ones for evasion. File should be in the format of a simple lookup mapping the category name to a new query - the default query will be used for any unmapped values.
+You can also provide a JSON file specifying custom queries and/or attributes for each category of information (`-query-config <filename>`), if you have specific queries to use instead of the default ones for evasion. File should be in the format of a simple lookup mapping the category name to a new query - the default query will be used for any unmapped values.
 
-Heres a very simple example file:
+Heres a very simple example file overriding the query only:
 
 ```
-{"users": "(objectClass=user)"}
+{
+    "users": {
+        "query": "(objectClass=user)"
+    }
+}
 ```
+
+Here is an example overriding the query and the attributes. The minimum attributes of "objectSid,distinguishedName,name" will be added to any in the configured list to prevent errors in the tool.
+
+```
+{
+    "users": {
+        "query": "(objectClass=user)",
+        "attributes": [
+            "ntSecurityDescriptor",
+            "objectSid",
+            "distinguishedName",
+            "name"
+        ]
+    }
+}
+```
+
+
+# Controlling attributes returned
+
+As well as the previously mentioned `-query-config <filename>` option, you can also specify `-attributes <attributes_list>` to specify the attributes for each object that will be returned for queries. The provided value should be a comma seperated list of attributes to query.
+
+The following attributes are needed for the tool to operate and will be added to the list of provided attributes if not already provided.
+
+```
+objectSid,distinguishedName,name
+```
+
+Interpreted attributes for `domain` and `domainShort` will also be added for objects that have an `objectSid` regardless when domain information is collected.
 
 
 # Bloodhound output
