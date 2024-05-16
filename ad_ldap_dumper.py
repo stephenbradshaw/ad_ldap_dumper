@@ -345,8 +345,144 @@ MANUAL_FLAGS = {
 
 }
 
+# Only collect these attributes for the schema, its all we use
+SCHEMA_ATTRIBUTES = [
+    'name',
+    'schemaIDGUID'
+]
 
 
+# BH attributes
+# TODO Confirm these all work!!!
+
+# attributes shared by all categories
+SHARED_ATTRIBUTES = [
+    'description',
+    'distinguishedName',
+    'isDeleted',
+    'nTSecurityDescriptor',
+    'name',
+    'objectCategory',
+    'objectClass',
+    'whenCreated'
+]
+
+CERTAUTHORITIES_ATTRIBUTES =  sorted(SHARED_ATTRIBUTES + [
+    'cACertificate',
+    'crossCertificatePair',
+    'objectGUID'
+])
+
+CERTENROLLSERVICES_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'cACertificate',
+    'certificateTemplates',
+    'crossCertificatePair',
+    'displayName',
+    'dNSHostName',
+    'flags',
+    'objectGUID'
+])
+
+CERTTEMPLATES_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'displayName',
+    'flags',
+    'objectGUID',
+    'msPKI-Cert-Template-OID',
+    'msPKI-Certificate-Application-Policy',
+    'msPKI-Certificate-Name-Flag',
+    'msPKI-Enrollment-Flag',
+    'msPKI-RA-Application-Policies',
+    'msPKI-RA-Policies',
+    'msPKI-RA-Signature',
+    'msPKI-Template-Schema-Version',
+    'pKIExpirationPeriod',
+    'pKIExtendedKeyUsage',
+    'pKIOverlapPeriod'
+])
+
+COMPUTERS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'dNSHostName',
+    'lastlogon',
+    'lastlogontimestamp',
+    'mail',
+    'msDS-AllowedToActOnBehalfOfOtherIdentity',
+    'msDS-GroupMSAMembership',
+    'ms-Mcs-AdmPwd', # LAPS passwd
+    'ms-Mcs-AdmPwdExpirationTime',
+    'objectSid',
+    'operatingsystem',
+    'primaryGroupID',
+    'pwdlastset',
+    'sAMAccountName',
+    'sIDHistory',
+    'servicePrincipalName',
+    'userAccountControl'
+])
+
+CONTAINERS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'objectGUID'
+])
+
+DOMAINS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'gPLink',
+    'objectSid',
+    'msDS-Behavior-Version'
+])
+
+FORESTS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'msDS-Behavior-Version',
+    'objectGUID'
+])
+
+GPOS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'displayName',
+    'flags',
+    'gPCFileSysPath',
+    'objectGUID'
+])
+
+GROUPS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'member',
+    'objectSid',
+    'sAMAccountName',
+    'sIDHistory'
+])
+
+OUS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'gPLink',
+    'objectGUID',
+    'whenCreated'
+])
+
+TRUSTED_DOMAINS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'objectGUID',
+    'securityIdentifier',
+    'trustAttributes',
+    'trustDirection',
+    'trustPartner',
+    'trustType'
+])
+
+USERS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'lastlogon',
+    'lastlogontimestamp',
+    'mail',
+    #'msSFU30Password', # causing errors in ldap3 for reasons??...?
+    'msDS-AllowedToActOnBehalfOfOtherIdentity',
+    'msDS-GroupMSAMembership',
+    'ms-Mcs-AdmPwdExpirationTime',
+    'objectSid',
+    'primaryGroupID',
+    'pwdlastset',
+    'sAMAccountName',
+    'scriptPath',
+    'sIDHistory',
+    'servicePrincipalName',
+    'unixUserPassword',
+    'unicodePwd',
+    'userPassword',
+    'userAccountControl'
+])
 
 BH_CONTAINER_KEYS = [
     'ChildObjects'
@@ -464,7 +600,8 @@ BH_USER_PROPERTIES = [
 
 class AdDumper:
 
-    def __init__(self, host=None, target_ip=None, username=None, password=None, ssl=False, sslprotocol=None, port=None, delay=0, jitter=0, paged_size=500, logger=Logger, raw=False, kerberos=False, no_password=False, query_config=None, import_mode=False, attributes=ldap3.ALL_ATTRIBUTES):
+    def __init__(self, host=None, target_ip=None, username=None, password=None, ssl=False, sslprotocol=None, port=None, delay=0, jitter=0, paged_size=500, logger=Logger, raw=False, kerberos=False, 
+                 no_password=False, query_config=None, import_mode=False, attributes=ldap3.ALL_ATTRIBUTES, bh_attributes=False):
         self.logger = logger
         self.host = host
         self.kerberos = kerberos
@@ -553,6 +690,7 @@ class AdDumper:
         self.methods = []
         self.config_containers_collected = False
         self.attributes = attributes
+        self.bh_attributes = bh_attributes
 
         # start with well known SIDS https://learn.microsoft.com/en-us/windows/win32/secauthz/well-known-sids
         self.sidLT = {
@@ -883,7 +1021,7 @@ class AdDumper:
     def query_certauthorities(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying certauthority objects from LDAP')
         query = '(objectClass=certificationAuthority)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         # forcing base to CN=Configuration is the only way Ive been able to get PKI related items to work, not sure if theres a betetr way
         gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
@@ -894,7 +1032,7 @@ class AdDumper:
     def query_certenrollservices(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying certenrollservice objects from LDAP')
         query = '(objectClass=pKIEnrollmentService)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
@@ -909,7 +1047,7 @@ class AdDumper:
     def query_certtemplates(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying certtemplate objects from LDAP')
         query = '(objectClass=pKICertificateTemplate)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
@@ -918,7 +1056,7 @@ class AdDumper:
     def query_containers(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying container objects from LDAP')
         query = '(objectClass=container)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
@@ -927,7 +1065,7 @@ class AdDumper:
     def query_computers(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying computer objects from LDAP')
         query = '(objectCategory=computer)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
@@ -938,7 +1076,7 @@ class AdDumper:
         # FEATURE add a derived domain functional param from msDS-Behavior-Version ?
         self.logger.info('Querying domain objects from LDAP')
         query = '(objectClass=domain)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
@@ -951,7 +1089,7 @@ class AdDumper:
         # configurationNamingContext should be under cn=partitions,cn=configuration,dc=domain,dc=local
         self.logger.info('Querying forest objects from LDAP')
         query = '(objectClass=crossRefContainer)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.server.info.other['configurationNamingContext'][0], query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
@@ -960,7 +1098,7 @@ class AdDumper:
     def query_gpos(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying GPO objects from LDAP')
         query = '(objectClass=groupPolicyContainer)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True) # domainPolicy
         return self.parse_records(gen)
@@ -970,7 +1108,7 @@ class AdDumper:
     def query_groups(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying group objects from LDAP')
         query = '(objectClass=group)' # if not self.alt_query else '(objectCategory=group)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)     
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
@@ -980,7 +1118,7 @@ class AdDumper:
     def query_ous(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying OU objects from LDAP')
         query = '(objectClass=organizationalUnit)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         return self.parse_records(gen)
@@ -988,7 +1126,7 @@ class AdDumper:
     def query_trusted_domains(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying trusted domain objects from LDAP')
         query = '(objectClass=trustedDomain)' # if not self.alt_query else '(objectCategory=trustedDomain)'
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = self.parse_records(gen)
@@ -1004,7 +1142,7 @@ class AdDumper:
     def query_users(self, attributes: str=ldap3.ALL_ATTRIBUTES) -> list:
         self.logger.info('Querying user objects from LDAP')
         query = '(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-ManagedServiceAccount)))' 
-        method_name = sys._getframe(0).f_code.co_name.split('_')[1]
+        method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
         data = data = self.parse_records(gen)
@@ -1020,6 +1158,8 @@ class AdDumper:
         return info
 
     def _configure_query(self, method_name, query, attributes):
+        if self.bh_attributes:
+            attributes = globals().get('{}_ATTRIBUTES'.format(method_name.upper()))
         if self.config and method_name in self.config:
             if 'query' in self.config[method_name]:
                 query = self.config[method_name]['query']
@@ -1035,7 +1175,7 @@ class AdDumper:
     # subClassOf in classSchema defines class inheritance, which is from class type top
     def retrieve_schema(self):
         self.logger.info('Querying schema from LDAP')
-        gen = self.connection.extend.standard.paged_search(self.server.info.other['schemaNamingContext'][0], '(objectClass=*)', attributes=ldap3.ALL_ATTRIBUTES, paged_size=self.paged_size, generator=True)
+        gen = self.connection.extend.standard.paged_search(self.server.info.other['schemaNamingContext'][0], '(|(objectClass=classSchema)(objectClass=attributeSchema))', attributes=SCHEMA_ATTRIBUTES, paged_size=self.paged_size, generator=True)
         parsed = [a['attributes'] for a in gen if 'attributes' in a]
         for entry in parsed:
             if 'schemaIDGUID' in entry:
@@ -1124,14 +1264,18 @@ class AdDumper:
             for index in range(0, len(data[key])):
                 for sd in ['nTSecurityDescriptor', 'msDS-GroupMSAMembership', 'msDS-AllowedToActOnBehalfOfOtherIdentity']:
                     if sd in data[key][index]:
-                        if self.raw:
-                            data[key][index]['{}_raw'.format(sd)] = data[key][index][sd]
-                        parsed = {}
-                        try: 
-                            parsed = self.parseSecurityDescriptor(data[key][index][sd])
-                        except Exception as e:
-                            self.logger.debug('Error in parsing security descriptor data in field {}: {}'.format(sd, str(e)))
-                        data[key][index][sd] = parsed
+                        if data[key][index][sd] and isinstance(data[key][index][sd], bytes):
+                            if self.raw:
+                                data[key][index]['{}_raw'.format(sd)] = data[key][index][sd]
+                            parsed = {}
+                            try: 
+                                parsed = self.parseSecurityDescriptor(data[key][index][sd])
+                            except Exception as e:
+                                self.logger.debug('Error in parsing security descriptor data in field {}: {}'.format(sd, str(e)))
+                            data[key][index][sd] = parsed
+                        else:
+                            # delete empty entries added by explicitly requesting attribute
+                            del data[key][index][sd]
 
                 if 'domains' not in key:
                     if 'objectSid' in data[key][index] and data[key][index]['objectSid']:
@@ -1191,9 +1335,12 @@ class AdDumper:
         matching_keys = [a for a in obj.keys() if a.lower() == name.lower()]
         if matching_keys:
             if name.lower().startswith('when') or name.lower().startswith('last') or name.lower() in ['pwdlastset']:
-                return self._dtt(obj[matching_keys[0]])
+                if obj[matching_keys[0]]:
+                    return self._dtt(obj[matching_keys[0]])
             else:
-                return obj[matching_keys[0]]
+                if obj[matching_keys[0]]:
+                    return obj[matching_keys[0]]
+            return default
         else:
             return default
 
@@ -1432,13 +1579,13 @@ class AdDumper:
 
     def _get_gplink(self, entry):
         try:
-            if 'gPLink' in entry:
+            if 'gPLink' in entry and entry['gPLink']:
                 gplinks = [a.split(';') for a in self._fp(entry, 'gPLink').upper().replace('[LDAP://', '').split(']')[:-1]]
                 return [{'GUID': self.bh_gpo_map[a[0]], 'IsEnforced': bool(int(a[1])) if a[1].isdigit() else False} for a in gplinks]
             else:
                 return []
         except:
-            self.logger.debug('Error parsing GPLInk in {}'.format(self._fp(entry, 'distinguishedName')))
+            self.logger.debug('Error parsing GPLink in {}'.format(self._fp(entry, 'distinguishedName')))
             return [] #[{'GUID': '', 'IsEnforced': False}]
 
 
@@ -1452,7 +1599,7 @@ class AdDumper:
             'distinguishedname' : self._fp(entry, 'distinguishedName').upper(), 
             'displayname' : self._fp(entry,'displayName', '').upper(),
             'domainsid' : self.get_domain_sid(entry['objectSid']) if 'objectSid' in entry else '',
-            'description' : self._fp(entry, 'description', [None])[0], 
+            'description' : self._fp(entry, 'description', [None])[0],
             #'highvalue': self._hv(entry['objectSid']) if 'objectSid' in entry else False, # not sure if this is correct, but this is no longer included in v6 so will leave it as is
             'isaclprotected': entry['nTSecurityDescriptor']['IsACLProtected']
         }
@@ -2005,6 +2152,7 @@ def command_line():
     input_arg_group.add_argument('-custom-query', type=str, default=None, help='Perform custom LDAP query provided as string instead of normal enumeration')
     input_arg_group.add_argument('-port', type=int, default=None, help='Port to connect to. Determined automatically if not specified.')
     input_arg_group.add_argument('-query-config', type=str, default=None, help='Provide JSON config file that defines custom LDAP queries and attribute lists for each query category, overriding other settings')
+    input_arg_group.add_argument('-bh-attributes', action='store_true', help='Collect object attributes compatible with BloodHound with object props only')
     input_arg_group.add_argument('-attributes', type=str, default=None, help='Provide comma seperated list of object attributes to return for all queries. Best used for custom queries as some attributes are required for normal operation.')
     
     mgroup_schema = input_arg_group.add_mutually_exclusive_group()
@@ -2067,12 +2215,14 @@ def command_line():
             else:
                 attributes = [a.strip() for a in args.attributes.split(',')]
                 attributes += [a for a in MINIMUM_ATTRIBUTES if a.lower() not in [b.lower() for b in attributes]]
-            
         else:
             attributes = ldap3.ALL_ATTRIBUTES
+
+        if args.bh_attributes:
+            logger.debug('Collecting only BH compatible attributes...')
             
         dumper = AdDumper(args.domain_controller, target_ip=args.target_ip, username=args.username, password=password, ssl=args.ssl, port=args.port, delay=args.sleep, jitter=args.jitter, paged_size=args.pagesize, logger=logger, raw=raw, 
-                          kerberos=args.kerberos, no_password=args.no_password, query_config=query_config, attributes=attributes)
+                          kerberos=args.kerberos, no_password=args.no_password, query_config=query_config, attributes=attributes, bh_attributes=args.bh_attributes)
         outputfile = args.output if args.output else '{}_{}_AD_Dump.json'.format(dumper.generate_timestamp(), args.domain_controller)
         valid_methods = dumper.get_valid_methods()
         

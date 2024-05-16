@@ -19,7 +19,7 @@ You can authenticate using either NTLM (password or pass the hash), simple bind,
 
 Provide the username (`-u USERNAME, --username USERNAME`) in the `DOMAIN\username` format for NTLM or as `username@domain.com` for simple bind. Provide the `LMHASH:NTHASH` hash in place of a password if you wish to use this. `:NTHASH` works too if you dont have a LM hash. you can either specify a password with `-password` or you will get prompted for one if you have attempted an authentication method that requires one.
 
-Use `-k` for Kerberos authentication. On *nix a ccache ticket cache must exist and be referenced by the `KRB5CCNAME` environment variable. Similar to the way Kerberos authentication works for Impacket. I havent tested this on Windows. You will need to provide the domain controller to connect to (-d option) as a domain name for this to work. This can work without DNS if you use your host file, but it will be finicky when it comes to case. Try and match the servers SPN.  You might also need to specify a realm (e.g. short domain name) and a dc-ip with those options. Best results usually come from using upper case for the realm.
+Use `-k` for Kerberos authentication. On *nix a ccache ticket cache must exist and be referenced by the `KRB5CCNAME` environment variable. Similar to the way Kerberos authentication works for Impacket. I havent tested this on Windows. You will need to provide the domain controller to connect to (`-d` option) as a domain name for this to work. This can work without DNS if you use your host file, but it will be finicky when it comes to case. Try and match the servers SPN.  You might also need to specify a realm (e.g. short domain name) and a `-dc-ip` with those options. Best results usually come from using upper case for the realm.
 
 The `-no-password` option can be used when attempting to logon as a user with an emtpy password set. You need to specify the username in NTLM format for this to work - the ldap3 module requires that some password be specified for all non anonymous binds, so we set a blank NT hash in this case. It seems to work.
 
@@ -52,7 +52,7 @@ All the attributes that the user you connect with can see will be collected for 
 
 The exceptions to this naming approach are parsed flag entries, which will have `Flags` appended to the name (e.g. `userAccountControlFlags`) and raw copies of parsed binary types which have `_raw` appended (e.g. `nTSecurityDescriptor_raw`).
 
-There is interpretation or parsing on security descriptor type attributes (`nTSecurityDescriptor` and `msDS-GroupMSAMembership`), date attributes and certain other interesting flag style attributes such as `userAccountControl`, but in general attributes are returned as is.
+There is interpretation or parsing on security descriptor type attributes (`nTSecurityDescriptor`, `msDS-AllowedToActOnBehalfOfOtherIdentity` and `msDS-GroupMSAMembership`), date attributes and certain other interesting flag style attributes such as `userAccountControl`, but in general attributes are returned as is.
 
 The `nTSecurityDescriptor` attribute for each object has the Dacls, owner, group and a few of the control fields parsed, and Sids resolved to a friendly name where possible. The Sacl component are currently not being retrieved. The raw version of the attribute is also still returned, as hexlified binary data.
 
@@ -85,16 +85,16 @@ The JSON represents an object with the following high level keys by default (alt
 * meta
 
 
-The key names that match that of a category from the previous section contain lists of each collected object of that type. e.g. users in the users key. The schema section contains a dump of the LDAP schema and the meta section contains various information about the operation of the tool.
+The key names that match that of a category from the previous section contain lists of each collected object of that type. e.g. users in the users key. The schema section contains a dump of a subset of the LDAP schema and the meta section contains various information about the operation of the tool.
 
-Even when run against small environments, this is **A LOT** of information. You will likely need to have a good approach to make sense out of this - I use iPython, and an overview of how to explore the data was covered in a post on my blog [here](https://thegreycorner.com/2023/08/16/iPython-for-cyber-security.html#exploring-data-by-example-active-directory).
+Even when run against small environments, this is **A LOT** of information. You will likely need to have a good approach to make sense out of this - I use iPython, and an overview of how to explore the data was covered in a post on my blog [here](https://thegreycorner.com/2023/08/16/iPython-for-cyber-security.html#exploring-data-by-example-active-directory). BloodHound output is also available in `BETA` form, discussed below.
 
 
 # Evasions
 
 The tool includes the option to introduce delays (`-sleep <time_seconds>`), with optional jitter (`-jitter <jitter_max_seconds>`), between each query it performs in order to avoid detection by tools that correlate queries over time from particular sources. 
 
-You can also provide a JSON file specifying custom queries and/or attributes for each category of information (`-query-config <filename>`), if you have specific queries to use instead of the default ones for evasion. File should be in the format of a simple lookup mapping the category name to a new query - the default query will be used for any unmapped values.
+You can also provide a JSON file specifying custom queries and/or attributes for each category of information (`-query-config <filename>`), if you have specific queries to use instead of the default ones for evasion or other reasons. File should be in the format of a simple lookup mapping the category name to a new query - the default query will be used for any unmapped values.
 
 Heres a very simple example file overriding the query only:
 
@@ -106,7 +106,7 @@ Heres a very simple example file overriding the query only:
 }
 ```
 
-Here is an example overriding the query and the attributes. The minimum attributes of "objectSid,distinguishedName,name" will be added to any in the configured list to prevent errors in the tool.
+Here is an example overriding the query and the attributes. The minimum attributes of `objectSid,distinguishedName,name` will be added to any in the configured list to prevent errors in the tool.
 
 ```
 {
@@ -135,6 +135,12 @@ objectSid,distinguishedName,name
 
 Interpreted attributes for `domain` and `domainShort` will also be added for objects that have an `objectSid` regardless when domain information is collected.
 
+The `-attributes` option is probably best used for custom queries defined using the `-custom-query`, or when using a small number of collection methods using `-methods`, as finding a single set of attributes that work usefully for multiple object types can be difficult. Use of `-query-config` when you have multiple types of objects to collect is recommended.
+
+There is also a `BETA` option to collect only the attributes used to create Bloodhound output files `-bh-attributes`. When used, a particular defined and minimum set of attributes will be collected per object type to fulfil the data requirements for Bloodhound.  Please report any issues.
+
+Precedence of application for options relating to attribute collection is `-query-config`, followed by `-bh-attributes` followed by `-attributes`, meaning that `-query-config` settings have priority, and so on, if multiple attribute options are used at once.
+
 
 # Bloodhound output
 
@@ -144,10 +150,11 @@ The best approach to use for the moment while any kinks in the output are resolv
 
 For an example output file of `20240410185809_192.168.1.100_AD_Dump.json` created using a normal execution of the tool, you can do the conversion by running the tool similar to the following:
 
-    ./ad_ldap_dumper.py -b -loglevel DEBUG -i 20240410185809_192.168.1.100_AD_Dump.json
+    ./ad_ldap_dumper.py -bh-output -loglevel DEBUG -i 20240410185809_192.168.1.100_AD_Dump.json
 
 The individual Bloodhound output files will be written individually to the present working directory (these files will not be added to a zip archive like SharpHound does).
 
+Please report any issues experienced using this option.
 
 # Global Catalog Servers
 
