@@ -31,24 +31,26 @@ The `ssl` option is available to use SSL for the LDAP connection for servers tha
 # Information collected
 
 The tool collects information on the following categories of objects. The LDAP query used by default for each category is provided:
-* certauthorities - (objectClass=certificationAuthority)
-* certenrollservices - (objectClass=pKIEnrollmentService)
-* certtemplates - (objectClass=pKICertificateTemplate)
-* containers - (objectClass=container)
-* computers - (objectClass=computer)
-* domains - (objectClass=domain)
-* forests - (objectClass=crossRefContainer)
-* gpos - (objectClass=groupPolicyContainer)
-* groups - (objectClass=group)
-* ous - (objectClass=organizationalUnit)
-* trusted_domains - (objectClass=trustedDomain)
-* users - (&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-ManagedServiceAccount)))
-* info - server.info as available to anonymous binds
+* certauthorities - `(objectClass=certificationAuthority)`
+* certenrollservices - `(objectClass=pKIEnrollmentService)`
+* certtemplates - `(objectClass=pKICertificateTemplate)`
+* containers - `(objectClass=container)`
+* computers - `(objectClass=computer)`
+* domains - `(objectClass=domain)`
+* forests - `(objectClass=crossRefContainer)`
+* gpos - `(objectClass=groupPolicyContainer)`
+* groups - `(objectClass=group)`
+* ous - `(objectClass=organizationalUnit)`
+* trusted_domains - `(objectClass=trustedDomain)`
+* users - `(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-ManagedServiceAccount)))`
+* info - no query, this collects `server.info` associated with the LDAP server connection as available to anonymous binds
 
 If any of the certificate categories are collected, the following query will also be run in the configuration naming context to obtain certificate object parent containers:
 * containers (|(objectClass=container)(objectClass=configuration))
 
-All the attributes that the user you connect with can see will be collected for each object. Attribute names are case sensitive, and largely match the LDAP names. 
+The majority of these queries are performed recursively from the root object, however the certificate and forest information is collected from beneath the `configurationNamingContext`.
+
+By default, all the attributes that the user you connect with can see will be collected for each object (the attribute option provided to the query is the ALL_ATTRIBUTES pattern of `*`). Attribute names in the output are case sensitive, and largely match the `lDAPDisplayName` value from the `attributeSchema` object in the schema. 
 
 The exceptions to this naming approach are parsed flag entries, which will have `Flags` appended to the name (e.g. `userAccountControlFlags`) and raw copies of parsed binary types which have `_raw` appended (e.g. `nTSecurityDescriptor_raw`).
 
@@ -56,9 +58,9 @@ There is interpretation or parsing on security descriptor type attributes (`nTSe
 
 The `nTSecurityDescriptor` attribute for each object has the Dacls, owner, group and a few of the control fields parsed, and Sids resolved to a friendly name where possible. The Sacl component are currently not being retrieved. The raw version of the attribute is also still returned, as hexlified binary data.
 
-There is an option (`-custom-query <query>`) to run an alternate custom LDAP query as opposed to multiple queries that collect the previous info, or to run only a subset of the built in query categories from the list above (`-methods <comma-seperated-list>`).
+There is an option (`-custom-query <query>`) to run a single alternate custom LDAP query as opposed to the multiple queries mentioned above. You can also choose to run only a subset of the built in query categories from the list above using the `-methods <comma-seperated-list>` option.
 
-The LDAP schema is also queried by default to help with some of the internal lookups when parsing ACL entries. You can choose to avoid the schema lookup or only perform this as required (`-only-schema` or `-no-schema`). Expect the quality of the output to be negatively affected if the schema collection is omitted.
+The LDAP schema is also queried by default to help with some of the internal lookups when parsing ACL entries and to filter out missing attributes from queries. You can choose to avoid the schema lookup or only perform this as required (`-only-schema` or `-no-schema`). Expect the quality of the output to be negatively affected if the schema collection is omitted. The query used for schema collection is `(|(objectClass=classSchema)(objectClass=attributeSchema))` run underneath the `schemaNamingContext` and a limited set of attributes are collected for this query, collecting enough information to meet the previously mentioned goals and to enable reconstruction of what attributes apply to what objects.
 
 
 # Output
@@ -125,9 +127,11 @@ Here is an example overriding the query and the attributes. The minimum attribut
 
 # Controlling attributes returned
 
-As well as the previously mentioned `-query-config <filename>` option, you can also specify `-attributes <attributes_list>` to specify the attributes for each object that will be returned for queries. The provided value should be a comma seperated list of attributes to query.
+By default all attributes are collected for the categories of information listed above. This is the `*` attributes query condition. This ensures you get all the relevant information, but also drammatically increases information collected and storage requirements and a lot of the information likely wont be useful. There are a few options that can be used to change which attributes are collected.
 
-The following attributes are needed for the tool to operate and will be added to the list of provided attributes if not already provided.
+As well as the `-query-config <filename>` option mentioned in the previous section, you can also specify `-attributes <attributes_list>` to specify the attributes for each object that will be returned for every query run. The provided value should be a comma seperated list of attributes to query.
+
+The following attributes are needed for the tool to operate and will be added to the list of provided attributes if not already included.
 
 ```
 objectSid,distinguishedName,name
@@ -140,6 +144,8 @@ The `-attributes` option is probably best used for custom queries defined using 
 There is also a `BETA` option to collect only the attributes used to create Bloodhound output files `-bh-attributes`. When used, a particular defined and minimum set of attributes will be collected per object type to fulfil the data requirements for Bloodhound.  Please report any issues.
 
 Precedence of application for options relating to attribute collection is `-query-config`, followed by `-bh-attributes` followed by `-attributes`, meaning that `-query-config` settings have priority, and so on, if multiple attribute options are used at once.
+
+If schema collection is enabled (which it is by default) then any requested attributes not present in the schema will be removed from queries, because they cannot be retrieved and may cause query errors. The removed entries will be listed at `DEBUG` logging level. If you want to see the attributes that are present in the directory you can run a schema collection (e.g. `-only-schema`) and check the `lDAPDisplayName` field for `attributeSchema` objects.
 
 
 # Bloodhound output

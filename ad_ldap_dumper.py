@@ -23,6 +23,7 @@ from impacket.uuid import bin_to_string
 from OpenSSL.crypto import load_certificate, FILETYPE_ASN1
 
 
+# TODO: look at these properties, make sure they are collected and consider evasion, and search for more: https://github.com/elastic/detection-rules/blob/374f21fbc46e0bc75fbc606f24bd8381b438d329/rules/windows/credential_access_ldap_attributes.toml#L19
 # FEATURE: restrict attributes returned based on an analysis of the schema? There might be a relevant option in the Connection for this..
 # FEATURE: Add option to split output into seperate files based on top level key names?
 # FEATURE: Optional retrieval and parsing of SACL for admin connections?
@@ -342,18 +343,27 @@ MANUAL_FLAGS = {
         'CA_SUPPORTS_MANUAL_AUTHENTICATION' : 0x00000004,
         'CA_SERVERTYPE_ADVANCED' : 0x00000008
     }
-
 }
 
-# Only collect these attributes for the schema, its all we use
+
+# TODO: lDAPAdminLimits set on query policy objects
+
+# Limit the schema collection to the following
 SCHEMA_ATTRIBUTES = [
+    'adminDescription',
+    'defaultSecurityDescriptor',
+    'description',
     'name',
-    'schemaIDGUID'
+    'lDAPDisplayName',
+    'mayContain',
+    'mustContain',
+    'objectClass',
+    'schemaIDGUID',
+    'systemMayContain',
+    'systemMustContain'
 ]
 
-
 # BH attributes
-# TODO Confirm these all work!!!
 
 # attributes shared by all categories
 SHARED_ATTRIBUTES = [
@@ -370,6 +380,7 @@ SHARED_ATTRIBUTES = [
 CERTAUTHORITIES_ATTRIBUTES =  sorted(SHARED_ATTRIBUTES + [
     'cACertificate',
     'crossCertificatePair',
+    'msPKI-Certificate-Policy',
     'objectGUID'
 ])
 
@@ -387,6 +398,7 @@ CERTTEMPLATES_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
     'displayName',
     'flags',
     'objectGUID',
+    'msDS-OIDToGroupLink',
     'msPKI-Cert-Template-OID',
     'msPKI-Certificate-Application-Policy',
     'msPKI-Certificate-Name-Flag',
@@ -402,18 +414,30 @@ CERTTEMPLATES_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
 
 COMPUTERS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
     'dNSHostName',
+    'homeDirectory',
     'lastlogon',
     'lastlogontimestamp',
     'mail',
     'msDS-AllowedToActOnBehalfOfOtherIdentity',
+    'msDS-AllowedToDelegateTo',
+    'msDS-HostServiceAccount',
     'msDS-GroupMSAMembership',
-    'ms-Mcs-AdmPwd', # LAPS passwd
+    'ms-Mcs-AdmPwd',
     'ms-Mcs-AdmPwdExpirationTime',
+    'msLAPS-EncryptedPassword',
+    'msLAPS-EncryptedPasswordHistory',
+    'msLAPS-EncryptedDSRMPassword',
+    'msLAPS-EncryptedDSRMPasswordHistory',
+    'msLAPS-CurrentPasswordVersion',
+    'msLAPS-Password',
+    'msLAPS-PasswordExpirationTime',
     'objectSid',
-    'operatingsystem',
+    'operatingSystem',
+    'operatingSystemServicePack',
     'primaryGroupID',
     'pwdlastset',
     'sAMAccountName',
+    'scriptpath',
     'sIDHistory',
     'servicePrincipalName',
     'userAccountControl'
@@ -450,6 +474,7 @@ GROUPS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
 
 OUS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
     'gPLink',
+    'gPOptions',
     'objectGUID',
     'whenCreated'
 ])
@@ -464,13 +489,15 @@ TRUSTED_DOMAINS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
 ])
 
 USERS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
+    'homeDirectory',
     'lastlogon',
     'lastlogontimestamp',
     'mail',
-    #'msSFU30Password', # causing errors in ldap3 for reasons??...?
+    'msSFU30Password',
     'msDS-AllowedToActOnBehalfOfOtherIdentity',
+    'msDS-AllowedToDelegateTo',
     'msDS-GroupMSAMembership',
-    'ms-Mcs-AdmPwdExpirationTime',
+    'msDS-HostServiceAccount',
     'objectSid',
     'primaryGroupID',
     'pwdlastset',
@@ -484,44 +511,7 @@ USERS_ATTRIBUTES = sorted(SHARED_ATTRIBUTES + [
     'userAccountControl'
 ])
 
-BH_CONTAINER_KEYS = [
-    'ChildObjects'
-]
-
-BH_COMPUTER_KEYS = [
-    'AllowedToAct',
-    'AllowedToDelegate',
-    'DcomUsers',
-    'HasSIDHistory',
-    'LocalAdmins',
-    'PSRemoteUsers',
-    'PrimaryGroupSID',
-    'PrivilegedSessions',
-    'RegistrySessions',
-    'RemoteDesktopUsers',
-    'Sessions',
-    'Status'
-]
-
-BH_DOMAIN_KEYS = [
-    'ChildObjects',
-    'GPOChanges',
-    'Links',
-    'Trusts'
-]
-
-BH_OU_KEYS = [
-    'ChildObjects',
-    'GPOChanges',
-    'Links'
-]
-
-BH_USER_KEYS = [
-    'AllowedToDelegate',
-    'HasSIDHistory',
-    'PrimaryGroupSID',
-    'SPNTargets'
-]
+# BloodHound common properties that are generated directly from ldap properties
 
 BH_COMMON_PROPERTIES = [
     'description',
@@ -531,71 +521,6 @@ BH_COMMON_PROPERTIES = [
     'name',
     'whencreated'
 ]
-
-
-BH_CERTAUTHORITY_PROPERTIES = [
-    "isaclprotected",
-    "certthumbprint",
-    "certname",
-    "certchain",
-    "hasbasicconstraints",
-    "basicconstraintpathlength"
-]
-
-
-BH_COMPUTER_PROPERTIES = [
-    'enabled',
-    'haslaps',
-    'lastlogon',
-    'lastlogontimestamp',
-    'operatingsystem',
-    'pwdlastset',
-    'samaccountname',
-    'serviceprincipalnames',
-    'sidhistory',
-    'trustedtoauth',
-    'unconstraineddelegation'
-]
-
-BH_DOMAIN_PROPERTIES = [
-    'functionallevel'
-]
-
-BH_GPO_PROPERTIES = [
-    'gpcpath'
-]
-
-BH_GROUP_PROPERTIES = [
-    #'admincount',
-    'samaccountname'
-]
-
-
-BH_USER_PROPERTIES = [
-    'displayname',
-    'dontreqpreauth',
-    'enabled',
-    'hasspn',
-    'homedirectory',
-    'lastlogon',
-    'lastlogontimestamp',
-    'logonscript',
-    'passwordnotreqd',
-    'pwdlastset',
-    'pwdneverexpires',
-    'samaccountname',
-    'sensitive',
-    'serviceprincipalnames',
-    'sfupassword',
-    'sidhistory',
-    'title',
-    'trustedtoauth',
-    'unconstraineddelegation',
-    'unicodepassword',
-    'unixpassword',
-    'userpassword',
-]
-
 
 
 class AdDumper:
@@ -1168,6 +1093,12 @@ class AdDumper:
                 attributes = self.config[method_name]['attributes']
                 self.logger.debug('Attributes override for method "{}" from config file: {}'.format(method_name, ','.join(attributes)))
                 attributes += [a for a in MINIMUM_ATTRIBUTES if a.lower() not in [b.lower() for b in attributes]]
+        if self.schema and not isinstance(attributes, str):
+            present_attributes = [b for b in attributes if b.lower() in [a['lDAPDisplayName'].lower() for a in self.schema]]
+            if len(attributes) != (present_attributes):
+                removed_attributes = [a for a in attributes if a.lower() not in [b.lower() for b in present_attributes]]
+                self.logger.debug('Removing the following attributes from {} query that were not present in schema: {}'.format(method_name, ', '.join(removed_attributes)))
+            attributes = present_attributes
         return query, attributes
 
 
@@ -1762,7 +1693,7 @@ class AdDumper:
 
     def bloodhound_map_container(self, entry):
         domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_CONTAINER_KEYS}}
+        out = {**self.bloodhound_map_common(entry)}
         out['DomainSID'] = {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
         out['ChildObjects'] = []
         unique_properties = {
@@ -1788,10 +1719,17 @@ class AdDumper:
 
 
     def bloodhound_map_computer(self, entry):
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_COMPUTER_KEYS}}
+        out = {**self.bloodhound_map_common(entry)}
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid')), self._fp(entry, 'primaryGroupID'))
         out['HasSIDHistory'] = [{'ObjectIdentifier': a, 'ObjectType': 'Computer'} for a in self._fp(entry, 'sIDHistory', [])]
         out['AllowedToDelegate'] = self._bh_parse_delegation(entry) 
+        out['DcomUsers'] = [] # cannt be collected from LDAP
+        out['LocalAdmins'] = [] # cannt be collected from LDAP
+        out['PSRemoteUsers'] = [] # cannt be collected from LDAP
+        out['PrivilegedSessions'] = [] # cannt be collected from LDAP
+        out['RegistrySessions'] = [] # cannt be collected from LDAP
+        out['RemoteDesktopUsers'] = [] # cannt be collected from LDAP
+        out['Sessions'] = [] # cannt be collected from LDAP
         out['Status'] = None # can you connect to computer, probably not suitable for this tool but if not null format is { "Connectable": false, "Error": "PwdLastSetOutOfRange" }
         out['AllowedToAct'] = self._bh_parse_allowed_to_act(entry)
         out['IsDC'] = 'SERVER_TRUST_ACCOUNT' in self._fp(entry, 'userAccountControlFlags', [])
@@ -1803,18 +1741,20 @@ class AdDumper:
         for key in ['Sessions', 'PrivilegedSessions', 'RegistrySessions']:
             out[key] = {'Results': [],'Collected': False, 'FailureReason': None} # requires LSA
 
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_COMPUTER_PROPERTIES})
+        #out['Properties'].update({a: self._fp(entry, a) for a in BH_COMPUTER_PROPERTIES})
         unique_properties = {
             'email': self._fp(entry, 'mail'),
             'isdc': 'SERVER_TRUST_ACCOUNT' in self._fp(entry, 'userAccountControlFlags', []),
             'lastlogontimestamp': self._fp(entry, 'lastLogontimeStamp', -1),
             'lastlogon' : (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'lastLogon')),
+            'operatingsystem': self._fp(entry, 'operatingSystem'),
             'pwdlastset': (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'pwdLastSet')),
             'name' : '{}.{}'.format(self._fp(entry, 'name'), self._fp(entry,'domain', '').upper()),
             'haslaps': True if 'ms-Mcs-AdmPwdExpirationTime' in entry else False,
             'serviceprincipalnames': self._fp(entry, 'servicePrincipalName', []),
             'unconstraineddelegation': True if 'TRUSTED_FOR_DELEGATION' in self._fp(entry, 'userAccountControlFlags') else False,
             'trustedtoauth': True if 'TRUSTED_TO_AUTH_FOR_DELEGATION' in self._fp(entry, 'userAccountControlFlags') else False,
+            'samaccountname': self._fp(entry, 'sAMAccountName'),
             'sidhistory' : self._fp(entry,'sidHistory', []),
             'enabled': False if 'ACCOUNTDISABLE' in self._fp(entry, 'userAccountControlFlags') else True,
         }
@@ -1826,12 +1766,12 @@ class AdDumper:
     #https://github.com/BloodHoundAD/SharpHoundCommon/blob/main/src/CommonLib/OutputTypes/Domain.cs
     def bloodhound_map_domain(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_DOMAIN_KEYS}}
+        out = {**self.bloodhound_map_common(entry)}
         out['ChildObjects'] = [] 
         out['GPOChanges'] = {'LocalAdmins': [], 'RemoteDesktopUsers': [], 'DcomUsers': [], 'PSRemoteUsers': [], 'AffectedComputers': []} # requires GPO disk parsing (?)
         out['Links'] = self._get_gplink(entry) # [{'IsEnforced': False, 'GUID': ''}] 
         out['Trusts'] = [] 
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_DOMAIN_PROPERTIES})
+        #out['Properties'].update({a: self._fp(entry, a) for a in BH_DOMAIN_PROPERTIES})
         unique_properties = {
             'domainsid': self._fp(entry, 'objectSid'),
             'domain': domainName,
@@ -1862,12 +1802,13 @@ class AdDumper:
     def bloodhound_map_group(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
         out = self.bloodhound_map_common(entry)
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_GROUP_PROPERTIES})
+        #out['Properties'].update({a: self._fp(entry, a) for a in BH_GROUP_PROPERTIES})
         out['Members'] = self._bh_map_group_members(entry) 
         out['ObjectIdentifier'] = self._tbs(self._fp(entry, 'objectSid'))
         unique_properties = {
             'admincount': bool(self._fp(entry, 'adminCount')),
-            'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else ''
+            'domainsid': {self.domainLT[a]:a for a in self.domainLT}[domainName] if domainName in self.domainLT.values() else '',
+            'samaccountname': self._fp(entry, 'SAMAccountName')
         }
         out['Properties'].update(unique_properties)
         del out['Properties']['displayname']
@@ -1876,7 +1817,7 @@ class AdDumper:
     def bloodhound_map_gpo(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
         out = self.bloodhound_map_common(entry)
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_GPO_PROPERTIES})
+        #out['Properties'].update({a: self._fp(entry, a) for a in BH_GPO_PROPERTIES})
         unique_properties = {
             'name' : '{}@{}'.format(self._fp(entry, 'displayName').upper(), domainName),
             'gpcpath' : self._fp(entry, 'gPCFileSysPath').upper(),
@@ -1887,7 +1828,7 @@ class AdDumper:
 
     def bloodhound_map_ou(self, entry):
         domainName = '.'.join([a.replace('DC=', '').upper() for a in self._fp(entry, 'distinguishedName', '').split(',') if a.startswith('DC=')])
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_OU_KEYS}}
+        out = {**self.bloodhound_map_common(entry)}
         out['ChildObjects'] = []
         out['GPOChanges'] = {'LocalAdmins': [], 'RemoteDesktopUsers': [], 'DcomUsers': [], 'PSRemoteUsers': [], 'AffectedComputers': []}
         out['Links'] = self._get_gplink(entry) # [{'IsEnforced': False, 'GUID': ''}] 
@@ -1938,14 +1879,16 @@ class AdDumper:
 
     def bloodhound_map_user(self, entry):
         '''Maps user entries from dump into a BloodHound compatible format'''
-        out = {**self.bloodhound_map_common(entry), **{a: '' for a in BH_USER_KEYS}}
+        out = {**self.bloodhound_map_common(entry)}
         out['SPNTargets'] = [b for b in [self._bh_parse_spn_targets(a) for a in self._fp(entry, 'servicePrincipalName', [])] if b]
         out['HasSIDHistory'] = [{'ObjectIdentifier': a, 'ObjectType': 'User'} for a in self._fp(entry, 'sIDHistory', [])] # CONFIRM: think this is correct
         out['AllowedToDelegate'] = self._bh_parse_delegation(entry) 
         out['PrimaryGroupSID'] = '{}-{}'.format(self.get_domain_sid(self._fp(entry, 'objectSid', '')), self._fp(entry, 'primaryGroupID'))
-        out['Properties'].update({a: self._fp(entry, a) for a in BH_USER_PROPERTIES})
+        #out['Properties'].update({a: self._fp(entry, a) for a in BH_USER_PROPERTIES})
         unique_properties = {
-            'email': self._fp(entry, 'mail'),
+            'displayname': self._fp(entry, 'displayName'),
+            'email': self._fp(entry, 'mail', ''),
+            'homedirectory': self._fp(entry, 'homedirectory', ''),
             'lastlogontimestamp': self._fp(entry, 'lastLogontimeStamp', -1),
             'lastlogon': (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'lastLogon')),
             'pwdlastset': (lambda x: x if x and int(x) > 0 else 0)(self._fp(entry, 'pwdLastSet')),
@@ -1964,7 +1907,9 @@ class AdDumper:
             'userpassword': self._fp(entry,'userPassword'),
             'sfupassword': self._fp(entry,'msSFU30Password'),
             'logonscript': self._fp(entry,'scriptPath'),
-            'sidhistory' : self._fp(entry,'sidHistory', [])
+            'samaccountname': self._fp(entry,'sAMAccountName'),
+            'sidhistory' : self._fp(entry,'sidHistory', []),
+            'title': self._fp(entry,'title')
         }
         if self.get_class(entry).lower() == 'ms-ds-group-managed-service-account':
             unique_properties['gmsa'] = True
