@@ -31,19 +31,19 @@ The `ssl` option is available to use SSL for the LDAP connection for servers tha
 # Information collected
 
 The tool collects information on the following categories of objects. The LDAP query used by default for each category is provided:
-* certauthorities - `(objectClass=certificationAuthority)`
-* certenrollservices - `(objectClass=pKIEnrollmentService)`
-* certtemplates - `(objectClass=pKICertificateTemplate)`
-* containers - `(objectClass=container)`
-* computers - `(objectClass=computer)`
-* domains - `(objectClass=domain)`
-* forests - `(objectClass=crossRefContainer)`
-* gpos - `(objectClass=groupPolicyContainer)`
-* groups - `(objectClass=group)`
-* ous - `(objectClass=organizationalUnit)`
-* trusted_domains - `(objectClass=trustedDomain)`
-* users - `(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-ManagedServiceAccount)))`
-* info - no query, this collects `server.info` associated with the LDAP server connection as available to anonymous binds
+* **certauthorities** - `(objectClass=certificationAuthority)`
+* **certenrollservices** - `(objectClass=pKIEnrollmentService)`
+* **certtemplates** - `(objectClass=pKICertificateTemplate)`
+* **containers** - `(objectClass=container)`
+* **computers** - `(objectClass=computer)`
+* **domains** - `(objectClass=domain)`
+* **forests** - `(objectClass=crossRefContainer)`
+* **gpos** - `(objectClass=groupPolicyContainer)`
+* **groups** - `(objectClass=group)`
+* **ous** - `(objectClass=organizationalUnit)`
+* **trusted_domains** - `(objectClass=trustedDomain)`
+* **users** - `(&(objectClass=user)(|(objectCategory=person)(objectCategory=msDS-GroupManagedServiceAccount)(objectCategory=msDS-ManagedServiceAccount)))`
+* **info** - no query, this collects `server.info` associated with the LDAP server connection as available to anonymous binds
 
 If any of the certificate categories are collected, the following query will also be run in the configuration naming context to obtain certificate object parent containers:
 * containers - `(|(objectClass=container)(objectClass=configuration))`
@@ -74,21 +74,21 @@ The output will be stored in an automatically named json file, unless an output 
 There is a (`BETA` quality) option there to output in a Bloodhound compatible format, discussed below.
 
 The JSON represents an object with the following high level keys by default (although this can change when run with non default options):
-* schema
-* certauthorities
-* certenrollservices
-* certtemplates
-* containers
-* computers
-* domains
-* forests
-* gpos
-* groups
-* ous
-* trusted_domains
-* users
-* info
-* meta
+* **schema**
+* **certauthorities**
+* **certenrollservices**
+* **certtemplates**
+* **containers**
+* **computers**
+* **domains**
+* **forests**
+* **gpos**
+* **groups**
+* **ous**
+* **trusted_domains**
+* **users**
+* **info**
+* **meta**
 
 
 The key names that match that of a category from the previous section contain lists of each collected object of that type. e.g. users in the users key. The schema section contains a dump of a subset of the LDAP schema and the meta section contains various information about the operation of the tool.
