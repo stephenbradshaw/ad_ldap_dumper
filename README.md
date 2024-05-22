@@ -46,7 +46,7 @@ The tool collects information on the following categories of objects. The LDAP q
 * info - no query, this collects `server.info` associated with the LDAP server connection as available to anonymous binds
 
 If any of the certificate categories are collected, the following query will also be run in the configuration naming context to obtain certificate object parent containers:
-* containers (|(objectClass=container)(objectClass=configuration))
+* containers - `(|(objectClass=container)(objectClass=configuration))`
 
 The majority of these queries are performed recursively from the root object, however the certificate and forest information is collected from beneath the `configurationNamingContext`.
 
@@ -60,7 +60,11 @@ The `nTSecurityDescriptor` attribute for each object has the Dacls, owner, group
 
 There is an option (`-custom-query <query>`) to run a single alternate custom LDAP query as opposed to the multiple queries mentioned above. You can also choose to run only a subset of the built in query categories from the list above using the `-methods <comma-seperated-list>` option.
 
-The LDAP schema is also queried by default to help with some of the internal lookups when parsing ACL entries and to filter out missing attributes from queries. You can choose to avoid the schema lookup or only perform this as required (`-only-schema` or `-no-schema`). Expect the quality of the output to be negatively affected if the schema collection is omitted. The query used for schema collection is `(|(objectClass=classSchema)(objectClass=attributeSchema))` run underneath the `schemaNamingContext` and a limited set of attributes are collected for this query, collecting enough information to meet the previously mentioned goals and to enable reconstruction of what attributes apply to what objects.
+The LDAP schema is also queried by default to help with some of the internal lookups when parsing ACL entries and to filter out missing attributes from queries. You can choose to avoid the schema lookup or only perform this as required (`-only-schema` or `-no-schema`). Expect the quality of the output to be negatively affected if the schema collection is omitted. 
+
+The query used for schema collection is `(|(objectClass=classSchema)(objectClass=attributeSchema))` run underneath the `schemaNamingContext`.
+
+A limited set of attributes are collected for this query, collecting enough information to meet the previously mentioned goals and to enable reconstruction of what attributes apply to what objects.
 
 
 # Output
