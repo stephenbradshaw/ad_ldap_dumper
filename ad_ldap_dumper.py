@@ -1297,7 +1297,7 @@ class AdDumper:
     def _tbs(self, sid):
         return sid if sid.startswith('S-1-5-21-') else '{}-{}'.format(self.bh_core_domain, sid)
 
-    def convert_bloodhound_acl(self, entry):
+    def convert_bloodhound_acl(self, entry: dict) -> list:
         '''Parse security descriptor from entry into Bloodhound format'''
 
         # mostly adapted from python bloodhound here:
@@ -1503,7 +1503,7 @@ class AdDumper:
             elif (pc.startswith('DC=')):
                 return None
             else:
-                self.logger.debug('No container found for {}'.format(self._fp(entry, 'distinguishedName')))
+                self.logger.debug('No parent container object identifier found in collected data for {}'.format(self._fp(entry, 'distinguishedName')))
                 return None
         else:
             return None
@@ -1512,7 +1512,11 @@ class AdDumper:
         try:
             if 'gPLink' in entry and entry['gPLink']:
                 gplinks = [a.split(';') for a in self._fp(entry, 'gPLink').upper().replace('[LDAP://', '').split(']')[:-1]]
-                return [{'GUID': self.bh_gpo_map[a[0]], 'IsEnforced': bool(int(a[1])) if a[1].isdigit() else False} for a in gplinks]
+                missing_gpos = [a[0] for a in gplinks if a[0] not in self.bh_gpo_map]
+                if missing_gpos:
+                    self.logger.debug('The following non existent GPOs were found linked to OU "{}": {}'.format(self._fp(entry, 'distinguishedName'), ', '.join(missing_gpos)))
+                present_gpos = [a for a in gplinks if a[0] in self.bh_gpo_map]
+                return [{'GUID': self.bh_gpo_map[a[0]], 'IsEnforced': bool(int(a[1])) if a[1].isdigit() else False} for a in present_gpos]
             else:
                 return []
         except:
@@ -1532,15 +1536,15 @@ class AdDumper:
             'domainsid' : self.get_domain_sid(entry['objectSid']) if 'objectSid' in entry else '',
             'description' : self._fp(entry, 'description', [None])[0],
             #'highvalue': self._hv(entry['objectSid']) if 'objectSid' in entry else False, # not sure if this is correct, but this is no longer included in v6 so will leave it as is
-            'isaclprotected': entry['nTSecurityDescriptor']['IsACLProtected']
+            'isaclprotected': entry.get('nTSecurityDescriptor', {'IsACLProtected': None})['IsACLProtected']
         }
         return {
             'Properties': {**{a: self._fp(entry, a) for a in BH_COMMON_PROPERTIES}, **common_properties},
-            'IsACLProtected': entry['nTSecurityDescriptor']['IsACLProtected'], # Protected DACL flag
+            'IsACLProtected': entry.get('nTSecurityDescriptor', {'IsACLProtected': None})['IsACLProtected'], # Protected DACL flag
             'IsDeleted': self._fp(entry, 'isDeleted', False),
             'ObjectIdentifier': self._get_entry_id(entry),
             'ContainedBy':  self._get_container(entry),
-            'Aces': self.convert_bloodhound_acl(entry)
+            'Aces': self.convert_bloodhound_acl(entry) if 'nTSecurityDescriptor' in entry else []
         }
 
 
@@ -1793,7 +1797,7 @@ class AdDumper:
             elif 'ForeignSecurityPrincipals' in member:
                 out.append({'ObjectIdentifier': self._tbs(member.split(',')[0].split('=')[-1]), 'ObjectType': 'Group'})
             else:
-                self.logger.debug('Group member {} could not be mapped to an object'.format(member))
+                self.logger.debug('Group member {} could not be mapped to an object type'.format(member))
                 out.append({'ObjectIdentifier': member, 'ObjectType': 'Unknown'})
         return out
 
@@ -1864,7 +1868,7 @@ class AdDumper:
         
 
     def _bh_parse_delegation(self, entry):
-        if 'TRUSTED_TO_AUTH_FOR_DELEGATION' in self._fp(entry, 'userAccountControlFlags'):
+        if 'TRUSTED_TO_AUTH_FOR_DELEGATION' in self._fp(entry, 'userAccountControlFlags', []):
             out = []
             for spnentry in self._fp(entry, 'msDS-AllowedToDelegateTo', []):
                 spn = self._bh_parse_spn(spnentry)
