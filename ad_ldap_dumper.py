@@ -1527,6 +1527,8 @@ class AdDumper:
 
     def bloodhound_map_common(self, entry):
         domainName = '.'.join([a.split('=')[1] for a in self._fp(entry,'distinguishedName', '').upper().split(',') if a.startswith('DC=')])
+        if not 'nTSecurityDescriptor' in entry:
+            self.logger.debug('Record for "{}" is missing the security descriptor field, ACLs and dependant information will not be available'.format(entry['distinguishedName']))
         common_properties = {
             #'name': '{}@{}'.format(self._fp(entry,'sAMAccountName', '').upper(), self._fp(entry,'domain', '').upper()),
             'name': '{}@{}'.format(str(self._fp(entry, 'name')).upper(), domainName.upper()),

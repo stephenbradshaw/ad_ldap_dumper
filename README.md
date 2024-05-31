@@ -180,7 +180,7 @@ Do a SRV lookup for `_gc._tcp.<domain_name>`. For domain `example.com`.
     dig SRV _gc._tcp.example.com
 
 
-The tool will now also warn you if you are NOT talking to a Global Catalog by checking the `info.other.isGlobalCatalogReady` property during connection. You can do this using anonymous binds (e.g. without authentication). If you bump the loglevel to at least `INFO` the tool will also specifically tell you that the server is a Global Catalog or not.
+The tool will now also warn you if you are NOT talking to a Global Catalog by checking the `info.other.isGlobalCatalogReady` property during connection. You can do this using anonymous binds (e.g. without authentication). If loglevel is set to at least `INFO` the tool will also specifically tell you that the server is a Global Catalog or not shortly after a successful connection is made to LDAP.
 
 Something like the following is a lightweight approach (e.g. minimally invasive on the target server) that will allow you to work out if a given server `192.168.1.100` is a Global Catalog server or not.
 
