@@ -525,7 +525,7 @@ BH_COMMON_PROPERTIES = [
 
 class AdDumper:
 
-    def __init__(self, host=None, target_ip=None, username=None, password=None, ssl=False, sslprotocol=None, port=None, delay=0, jitter=0, paged_size=500, logger=Logger, raw=False, kerberos=False, 
+    def __init__(self, host=None, target_ip=None, username=None, password=None, ssl=False, sslprotocol=None, port=None, delay=0, jitter=0, paged_size=500, logger=Logger('AdDumper'), raw=False, kerberos=False, 
                  no_password=False, query_config=None, import_mode=False, attributes=ldap3.ALL_ATTRIBUTES, bh_attributes=False):
         self.logger = logger
         self.host = host
