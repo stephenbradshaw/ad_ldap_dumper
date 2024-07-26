@@ -57,9 +57,6 @@ def command_line():
     process_field = lambda x: x[0] if isinstance(x, list) and len(x) == 1 else '' if x == [] else x
     out_filtered = [{b: process_field(a[b]) for b in out_attributes if b in a} for a in data.get('users', [])]
 
-    import ipdb 
-    ipdb.set_trace()
-
     open(outputfile, 'w').write(json.dumps(out_filtered, indent=4))
 
 
