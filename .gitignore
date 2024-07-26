@@ -162,4 +162,3 @@ cython_debug/
 
 .DS_Store
 *.json
-user_dumper.py
