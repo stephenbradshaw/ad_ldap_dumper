@@ -526,7 +526,7 @@ BH_COMMON_PROPERTIES = [
 class AdDumper:
 
     def __init__(self, host=None, target_ip=None, username=None, password=None, ssl=False, sslprotocol=None, port=None, delay=0, jitter=0, paged_size=500, logger=Logger('AdDumper'), raw=False, kerberos=False, 
-                 no_password=False, query_config=None, import_mode=False, attributes=ldap3.ALL_ATTRIBUTES, bh_attributes=False):
+                 no_password=False, query_config=None, import_mode=False, attributes=ldap3.ALL_ATTRIBUTES, bh_attributes=False, start_tls=False):
         self.logger = logger
         self.host = host
         self.kerberos = kerberos
@@ -562,13 +562,12 @@ class AdDumper:
                 raise Exception('Passwordless authentication not supported using SIMPLE bind, specify your login name as DOMAIN\\username to use NTLM authentication')
         self.ssl = ssl 
         self.raw = raw
-        #self.alt_query = alt_query
         self.port = port if port else 636 if self.ssl else 389
         self.delay = delay
         self.jitter = jitter
-        spv = self.get_supported_tls()
         self.config = query_config
         if sslprotocol:
+            spv = self.get_supported_tls()
             if sslprotocol in spv:
                 self.sslprotocol = spv[sslprotocol]
             else:
@@ -576,6 +575,7 @@ class AdDumper:
         else:
             self.sslprotocol = None
         
+        self.start_tls = start_tls
         self.bh_parent_map = {}
         self.bh_gpo_map = {}
         self.bh_cert_temp_map = {}
@@ -705,9 +705,9 @@ class AdDumper:
 
     def get_supported_tls(self):
         try:
-            return {a.name:a.value for a in ssl.TLSVersion if 'SUPPORTED' not in a.name}
+            return {a.replace('PROTOCOL_', ''): getattr(ssl, a).value for a in dir(ssl) if a.startswith('PROTOCOL_') and 'v' in a}
         except:
-            return {'SSLv23' : 2, 'TLSv1' : 3, 'TLSv1_1' : 4, 'TLSv1_2' : 5}
+            return {'SSLv23': 2, 'TLSv1': 3, 'TLSv1_1': 4, 'TLSv1_2': 5}
 
     def connect(self):
         if not self.target_ip:
@@ -718,15 +718,28 @@ class AdDumper:
             else:
                 self.server = Server(self.target_ip, get_info=ALL, port=self.port, use_ssl=True)
         else:
-            self.server = Server(self.target_ip, get_info=ALL, port=self.port)
+            if self.sslprotocol:
+                self.server = Server(self.target_ip, get_info=ALL, port=self.port, tls=Tls(validate=0, version=self.sslprotocol))
+            else:
+                self.server = Server(self.target_ip, get_info=ALL, port=self.port)
         
         # host needs to be a domain name for kerberos
         # we ensure this is the case even if we connect to an IP via the sasl_credentials with the host specified as var 1 in Connection
+        
         if self.kerberos:
+            self.logger.debug(f'Attempting to perform Kerberos connection to LDAP server {self.server} with bind host name {self.host}')
             self.connection = Connection(self.server, sasl_credentials=(self.host,), authentication=SASL, sasl_mechanism=KERBEROS) 
         else:
+            self.logger.debug(f'Attempting to perform connection to LDAP server {self.server}')
             self.connection = Connection(self.server, user=self.username, password=self.password, authentication=self.authentication)
 
+        if self.start_tls:
+            self.logger.debug(f'Attempting to START_TLS on connection...')
+            try:
+                self.connection.start_tls()
+            except Exception as e:
+                self.logger.debug(f'Exception during START_TLS operation: {str(e)}')
+                sys.exit(1)
 
         try:
             bindresult = self.connection.bind()
@@ -2095,8 +2108,9 @@ def command_line():
     
     input_arg_group.add_argument('-target-ip', type=str, default=None, help='IP Address of the target machine. If omitted it will use whatever was specified as target')
     input_arg_group.add_argument('-ssl', action='store_true', help='Force use of SSL for LDAP connection')
+    input_arg_group.add_argument('-ssl_protocol', type=str, default=None, help='Use a specific SSL/TLS protocol version')
+    input_arg_group.add_argument('-start_tls', action='store_true', help='Attempt to upgrade the plain text LDAP port/connection to SSL (post authentication)')
     input_arg_group.add_argument('-methods', type=str, default='', help='Comma seperated list of collection methods to use')
-    #input_arg_group.add_argument('-alt-query', action='store_true', help='Use less common alternate LDAP query for some object types')
     input_arg_group.add_argument('-sleep', type=int, default=0, help='Time in seconds to sleep between each paged LDAP request and each enumeration method')
     input_arg_group.add_argument('-jitter', type=int, default=0, help='Set to a positive integer to add a random value of up to that many seconds to the sleep delay')
     input_arg_group.add_argument('-pagesize', type=int, default=500, help='Page size for LDAP requests')
@@ -2173,7 +2187,7 @@ def command_line():
             logger.debug('Collecting only BH compatible attributes...')
             
         dumper = AdDumper(args.domain_controller, target_ip=args.target_ip, username=args.username, password=password, ssl=args.ssl, port=args.port, delay=args.sleep, jitter=args.jitter, paged_size=args.pagesize, logger=logger, raw=raw, 
-                          kerberos=args.kerberos, no_password=args.no_password, query_config=query_config, attributes=attributes, bh_attributes=args.bh_attributes)
+                          kerberos=args.kerberos, no_password=args.no_password, query_config=query_config, attributes=attributes, bh_attributes=args.bh_attributes, sslprotocol=args.ssl_protocol, start_tls=args.start_tls)
         outputfile = args.output if args.output else '{}_{}_AD_Dump.json'.format(dumper.generate_timestamp(), args.domain_controller)
         valid_methods = dumper.get_valid_methods()
         
