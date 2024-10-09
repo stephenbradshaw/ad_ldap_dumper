@@ -779,7 +779,7 @@ class AdDumper:
         else:
             self.logger.info('Target server is a Global Catalog server')
         self.root = self.server.info.other['defaultNamingContext'][0]
-        self.logger.info('Authenticated as user: {}'.format((lambda x: x if x else 'Anonymous')(self.whoami())))
+        self.logger.info('Authenticated as user: {}'.format(self.whoami()))
     
 
     def generate_timestamp(self):
@@ -1120,7 +1120,8 @@ class AdDumper:
 
     def whoami(self) -> str:
         try:
-            return self.connection.extend.standard.who_am_i()
+            who = (lambda x: x if x else 'Anonymous')(self.connection.extend.standard.who_am_i())
+            return who.replace('u:', '', 1) if who.startswith('u:') else who
         except Exception as e:
             return f'Exception determining connected user: {str(e)}'
 
