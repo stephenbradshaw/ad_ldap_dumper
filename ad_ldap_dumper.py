@@ -15,12 +15,15 @@ import typing
 from functools import reduce
 from binascii import hexlify, unhexlify
 from logging import Logger
-from ldap3 import Server, Connection, ALL, Tls, SASL, KERBEROS
+from ldap3 import Server, Connection, ALL, Tls, SASL, KERBEROS, EXTERNAL, AUTO_BIND_TLS_BEFORE_BIND
 from ldap3.utils.ciDict import CaseInsensitiveDict
 from impacket.ldap.ldaptypes import ACE, ACCESS_ALLOWED_OBJECT_ACE, ACCESS_MASK, LDAP_SID, SR_SECURITY_DESCRIPTOR
 from datetime import datetime, timedelta
 from impacket.uuid import bin_to_string
 from OpenSSL.crypto import load_certificate, FILETYPE_ASN1
+from cryptography.hazmat.primitives.serialization import pkcs12
+from cryptography.hazmat.primitives import serialization
+
 
 
 # TODO: look at these properties, make sure they are collected and consider evasion, and search for more: https://github.com/elastic/detection-rules/blob/374f21fbc46e0bc75fbc606f24bd8381b438d329/rules/windows/credential_access_ldap_attributes.toml#L19
@@ -523,10 +526,11 @@ BH_COMMON_PROPERTIES = [
 ]
 
 
+
 class AdDumper:
 
     def __init__(self, host=None, target_ip=None, username=None, password=None, ssl=False, sslprotocol=None, port=None, delay=0, jitter=0, paged_size=500, logger=Logger('AdDumper'), raw=False, kerberos=False, 
-                 no_password=False, query_config=None, import_mode=False, attributes=ldap3.ALL_ATTRIBUTES, bh_attributes=False, start_tls=False):
+                 no_password=False, query_config=None, import_mode=False, attributes=ldap3.ALL_ATTRIBUTES, bh_attributes=False, start_tls=False, client_cert_file=None, client_key_file=None):
         self.logger = logger
         self.host = host
         self.kerberos = kerberos
@@ -540,8 +544,10 @@ class AdDumper:
                 self.username = cred.name.__bytes__().decode()
                 self.logger.debug('Username from Kerberos: {}'.format(self.username))
             except Exception as e:
-                self.logger.debug('Failed to determine username from Kerberos credential store using gssapi. Ensure gssapi is installed for Kerberos use. Exception:\n{}'.format(e))
+                self.logger.debug(f'Failed to determine username from Kerberos credential store using gssapi. Ensure gssapi is installed for Kerberos use. Exception:\n{e}')
                 self.username = 'Kerberos {}'.format(os.environ["KRB5CCNAME"])
+        elif (client_cert_file and client_key_file):
+            self.logger.debug(f'Attempting to use client certificate file "{client_cert_file}" and client key file "{client_key_file}" for authentication')
         elif not username:
             self.authentication = None
             if not import_mode:
@@ -576,6 +582,9 @@ class AdDumper:
             self.sslprotocol = None
         
         self.start_tls = start_tls
+        self.client_cert_file = client_cert_file
+        self.client_key_file = client_key_file
+        
         self.bh_parent_map = {}
         self.bh_gpo_map = {}
         self.bh_cert_temp_map = {}
@@ -712,28 +721,36 @@ class AdDumper:
     def connect(self):
         if not self.target_ip:
             raise Exception('No host provided')
-        if self.ssl:
-            if self.sslprotocol:
-                self.server = Server(self.target_ip, get_info=ALL, port=self.port, use_ssl=True, tls=Tls(validate=0, version=self.sslprotocol) )
-            else:
-                self.server = Server(self.target_ip, get_info=ALL, port=self.port, use_ssl=True)
+        
+        if self.client_key_file and self.client_cert_file:
+            tls_object = Tls(validate=0, version=self.sslprotocol, local_private_key_file=self.client_key_file, local_certificate_file=self.client_cert_file)
         else:
-            if self.sslprotocol:
-                self.server = Server(self.target_ip, get_info=ALL, port=self.port, tls=Tls(validate=0, version=self.sslprotocol))
+            tls_object = Tls(validate=0, version=self.sslprotocol)
+
+        if self.ssl:
+            self.server = Server(self.target_ip, get_info=ALL, port=self.port, use_ssl=True, tls=tls_object)
+        else:
+            if self.start_tls or (self.client_key_file and self.client_cert_file):
+                self.server = Server(self.target_ip, get_info=ALL, port=self.port, tls=tls_object)
             else:
                 self.server = Server(self.target_ip, get_info=ALL, port=self.port)
         
         # host needs to be a domain name for kerberos
         # we ensure this is the case even if we connect to an IP via the sasl_credentials with the host specified as var 1 in Connection
-        
         if self.kerberos:
             self.logger.debug(f'Attempting to perform Kerberos connection to LDAP server {self.server} with bind host name {self.host}')
             self.connection = Connection(self.server, sasl_credentials=(self.host,), authentication=SASL, sasl_mechanism=KERBEROS) 
+        elif self.client_key_file and self.client_cert_file and self.ssl:
+            self.logger.debug(f'Attempting to authenticate to LDAP server {self.server} using provided certificate with SSL bind')
+            self.connection = Connection(self.server) 
+        elif (self.client_key_file and self.client_cert_file):
+            self.logger.debug(f'Attempting to perform connection to LDAP server {self.server} with STARTTLS')
+            self.connection = Connection(self.server, authentication=SASL, sasl_mechanism=EXTERNAL, auto_bind=AUTO_BIND_TLS_BEFORE_BIND)
         else:
             self.logger.debug(f'Attempting to perform connection to LDAP server {self.server}')
             self.connection = Connection(self.server, user=self.username, password=self.password, authentication=self.authentication)
 
-        if self.start_tls:
+        if self.start_tls and not (self.client_key_file and self.client_cert_file):
             self.logger.debug(f'Attempting to START_TLS on connection...')
             try:
                 self.connection.start_tls()
@@ -741,15 +758,20 @@ class AdDumper:
                 self.logger.debug(f'Exception during START_TLS operation: {str(e)}')
                 sys.exit(1)
 
-        try:
-            bindresult = self.connection.bind()
-        except Exception as e:
-            print('An error occurred when binding to the LDAP service:\n{}\n'.format(e))
-            print('For Kerberos errors try manually specifying the realm, ensuring that forged ccache tickets use upper case for the domain and removing conflicting hosts file entries.')
-            sys.exit(1)
+        # need to open and not rebind when relying on TLS connection for authentication
+        if (self.client_key_file and self.client_cert_file) and self.ssl:
+            self.connection.open() 
+        # the connection auto binds when using certificate auth on the non SSL LDAP port
+        elif not (self.client_key_file and self.client_cert_file):
+            try:
+                bindresult = self.connection.bind()
+            except Exception as e:
+                print('An error occurred when binding to the LDAP service:\n{}\n'.format(e))
+                print('For Kerberos errors try manually specifying the realm, ensuring that forged ccache tickets use upper case for the domain and removing conflicting hosts file entries.')
+                sys.exit(1)
 
-        if not bindresult:
-            raise Exception('An error occurred when attempting to bind to the LDAP server: {}'.format(', '.join(['{} : {}' .format(a, self.connection.result[a]) for a in  self.connection.result])))
+            if not bindresult:
+                raise Exception('An error occurred when attempting to bind to the LDAP server: {}'.format(', '.join(['{} : {}' .format(a, self.connection.result[a]) for a in  self.connection.result])))
         
         # Check to see if server is a Global Catalog server
         if not 'TRUE' in self.server.info.other.get('isGlobalCatalogReady'):
@@ -2098,6 +2120,56 @@ def create_kerberos_config(realm, kdc):
     return krb_config
     
 
+
+class PKCS12Cert:
+    '''Object representing PKCS12 cert allowing extraction of useful data'''
+    def __init__(self, pkcsfile):
+        try:
+            certdata = open(pkcsfile, 'rb').read()
+            p12 = pkcs12.load_pkcs12(certdata, None)
+        except (TypeError, ValueError) as e:
+            raise Exception(error=f'Error in loading certificate: {str(e)}')
+        self.certificate = p12.cert
+        self.intermediates = p12.additional_certs
+        self.private_key = p12.key
+
+    def get_certificate(self):
+        return self.certificate.certificate.public_bytes(
+            encoding=serialization.Encoding.PEM).strip()
+
+    def get_intermediates(self):
+        if self.intermediates:
+            int_data = [
+                ic.certificate.public_bytes(
+                    encoding=serialization.Encoding.PEM).strip()
+                for ic in self.intermediates
+            ]
+            return int_data
+        return None
+
+    def get_private_key(self):
+        return self.private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption()).strip()
+
+    def get_private_key_passphrase(self):
+        return None
+
+
+def create_temporary_cert_files(pkcs12file):
+    certobj = PKCS12Cert(pkcs12file)
+    cert_data = certobj.get_certificate()
+    key_data = certobj.get_private_key()
+    pem_certfile = tempfile.NamedTemporaryFile()
+    pem_certfile.write(cert_data)
+    pem_certfile.flush()
+    pem_keyfile = tempfile.NamedTemporaryFile()
+    pem_keyfile.write(key_data)
+    pem_keyfile.flush()
+    return (pem_certfile, pem_keyfile)
+
+
 def command_line():
     parser = MyParser()
     input_arg_group = parser.add_argument_group('Operation')
@@ -2128,6 +2200,10 @@ def command_line():
     agroup = auth_arg_group.add_mutually_exclusive_group()
     agroup.add_argument('-u', '--username', type=str, default = '', help='Username, use DOMAIN\\username format for NTLM authentication, user@domain for SIMPLE auth')
     agroup.add_argument('-k', '--kerberos', action='store_true', help='Authenticate using Kerberos via KRB5CCNAME environment variable')
+    agroup_cert = agroup.add_mutually_exclusive_group()
+    agroup_cert.add_argument('-cc', '--pem_client_cert', type=str, default = None, help='Authenticate using client certificate and key in PEM format - PEM cert file')
+    agroup.add_argument('-ck', '--pem_client_key', type=str, default = None, help='Authenticate using client certificate and key in PEM format - PEM key file')
+    agroup_cert.add_argument('-pc', '--pkcs12_client_cert', type=str, default = None, help='Authenticate using client certificate and key in (passwordless) PKCS12 format')
 
     auth_arg_group.add_argument('-no-password', action='store_true', help='Attempt to logon with an empty password (requires username in NTLM format)')
     auth_arg_group.add_argument('-password', type=str,  default = '', help='Password, hashes also accepted for NTLM. Will be prompted for if not provided and no-password not set')
@@ -2185,9 +2261,30 @@ def command_line():
 
         if args.bh_attributes:
             logger.debug('Collecting only BH compatible attributes...')
+
+        client_cert = None 
+        client_key = None
+
+        if args.pem_client_cert:
+            if args.pkcs12_client_cert:
+                raise Exception('Cannot use PEM client certificates and pkcs12 certificates for the same operation')
+            if args.pem_client_key:
+                client_cert = args.pem_client_cert
+                client_key = args.pem_client_key
+            else:
+                raise Exception('Cannot use a client PEM certificate without a key')
+
+        if args.pkcs12_client_cert:
+            client_cert_file,  client_key_file = create_temporary_cert_files(args.pkcs12_client_cert)
+            client_cert = client_cert_file.name 
+            client_key = client_key_file.name
+            logger.info(f'Writing temporary PEM certificate and key files from PKCS12 conversion to {client_cert} and {client_key}')
+
+
             
-        dumper = AdDumper(args.domain_controller, target_ip=args.target_ip, username=args.username, password=password, ssl=args.ssl, port=args.port, delay=args.sleep, jitter=args.jitter, paged_size=args.pagesize, logger=logger, raw=raw, 
-                          kerberos=args.kerberos, no_password=args.no_password, query_config=query_config, attributes=attributes, bh_attributes=args.bh_attributes, sslprotocol=args.ssl_protocol, start_tls=args.start_tls)
+        dumper = AdDumper(args.domain_controller, target_ip=args.target_ip, username=args.username, password=password, ssl=args.ssl, port=args.port, delay=args.sleep, 
+                          jitter=args.jitter, paged_size=args.pagesize, logger=logger, raw=raw, kerberos=args.kerberos, no_password=args.no_password, query_config=query_config,
+                          attributes=attributes, bh_attributes=args.bh_attributes, sslprotocol=args.ssl_protocol, start_tls=args.start_tls, client_cert_file=client_cert, client_key_file=client_key)
         outputfile = args.output if args.output else '{}_{}_AD_Dump.json'.format(dumper.generate_timestamp(), args.domain_controller)
         valid_methods = dumper.get_valid_methods()
         
