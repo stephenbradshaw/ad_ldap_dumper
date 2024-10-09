@@ -779,7 +779,7 @@ class AdDumper:
         else:
             self.logger.info('Target server is a Global Catalog server')
         self.root = self.server.info.other['defaultNamingContext'][0]
-        self.logger.debug('Connected as user: {}'.format((lambda x: x if x else 'Anonymous')(self.whoami())))
+        self.logger.info('Authenticated as user: {}'.format((lambda x: x if x else 'Anonymous')(self.whoami())))
     
 
     def generate_timestamp(self):
