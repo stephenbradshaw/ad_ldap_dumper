@@ -779,6 +779,7 @@ class AdDumper:
         else:
             self.logger.info('Target server is a Global Catalog server')
         self.root = self.server.info.other['defaultNamingContext'][0]
+        self.logger.debug('Connected as user: {}'.format((lambda x: x if x else 'Anonymous')(self.whoami())))
     
 
     def generate_timestamp(self):
@@ -1117,6 +1118,10 @@ class AdDumper:
         info['other'] = dict(info['other'])
         return info
 
+    def whoami(self) -> str:
+        return self.connection.extend.standard.who_am_i()
+
+
     def _configure_query(self, method_name, query, attributes):
         if self.bh_attributes:
             attributes = globals().get('{}_ATTRIBUTES'.format(method_name.upper()))
@@ -1203,7 +1208,7 @@ class AdDumper:
                         out['containers'] = []
                     out['containers'] += self._query_certcontainers()
 
-        out['meta'] = {'start_time': self.start_time, 'end_time' : self.generate_timestamp(), 'username': self.username, 'server': self.host, 'methods' : list([a for a in out.keys() if a != 'schema']), 'sid_lookup' : self.sidLT}
+        out['meta'] = {'start_time': self.start_time, 'end_time' : self.generate_timestamp(), 'username': self.username, 'whoami': self.whoami(), 'server': self.host, 'methods' : list([a for a in out.keys() if a != 'schema']), 'sid_lookup' : self.sidLT}
         self.logger.info('Data collection complete, processing...')
 
         if self.post_process_data:
@@ -1215,7 +1220,7 @@ class AdDumper:
     def run_custom_query(self, query, attributes=ldap3.ALL_ATTRIBUTES, parse_records=True, controls=None):
         self.start_time = self.generate_timestamp()
         data = self.custom_query(query, attributes, parse_records, controls)
-        meta = {'custom_query': query, 'start_time': self.start_time,'end_time' : self.generate_timestamp(), 'username': self.username, 'server': self.host}
+        meta = {'custom_query': query, 'start_time': self.start_time,'end_time' : self.generate_timestamp(), 'username': self.username, 'whoami': self.whoami(), 'server': self.host}
         out = self.post_process({'meta': meta, 'custom_query_results' : data}, auto_query_domains=False)
         return self.jsonify(out)
 
