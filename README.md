@@ -15,17 +15,19 @@ This tool depends on ldap3 and impacket Python modules to work. For kerberos you
 
 # Authentication options
 
-You can authenticate using either NTLM (password or pass the hash), simple bind, Kerberos or anonymous.
+You can authenticate using either NTLM (password or pass the hash), simple bind, Kerberos, ADCS certificates or anonymous.
 
-Provide the username (`-u USERNAME, --username USERNAME`) in the `DOMAIN\username` format for NTLM or as `username@domain.com` for simple bind. Provide the `LMHASH:NTHASH` hash in place of a password if you wish to use this. `:NTHASH` works too if you dont have a LM hash. you can either specify a password with `-password` or you will get prompted for one if you have attempted an authentication method that requires one.
+Provide the username (`-u USERNAME, --username USERNAME`) in the `DOMAIN\username` format for NTLM or as `username@domain.com` for simple bind. Provide the `LMHASH:NTHASH` hash in place of a password if you wish to use this. `:NTHASH` works too if you dont have a LM hash. You can either specify a password with `-password` or you will get prompted for one if you have attempted an authentication method that requires one.
 
 Use `-k` for Kerberos authentication. On *nix a ccache ticket cache must exist and be referenced by the `KRB5CCNAME` environment variable. Similar to the way Kerberos authentication works for Impacket. I havent tested this on Windows. You will need to provide the domain controller to connect to (`-d` option) as a domain name for this to work. This can work without DNS if you use your host file, but it will be finicky when it comes to case. Try and match the servers SPN.  You might also need to specify a realm (e.g. short domain name) and a `-dc-ip` with those options. Best results usually come from using upper case for the realm.
 
-The `-no-password` option can be used when attempting to logon as a user with an emtpy password set. You need to specify the username in NTLM format for this to work - the ldap3 module requires that some password be specified for all non anonymous binds, so we set a blank NT hash in this case. It seems to work.
+There is a `-pc`/`--pkcs12_client_cert` options to allow the use of a PKCS12 certificate for ADCS certificate based authentication, or `-cc`/`--pem_client_cert` and `-ck`/`--pem_client_key` options to allow the same using PEM certifcate AND key files (individual cert and key files must be provided if using PEM instead of PKCS12). Use of a PKCS12 certificate will perform an automatic creation of PEM based key and cert files to temp files on disk (required for use by the ldap3 library) which _SHOULD_ be automatically deleted once no longer used (the file names will be output by the logger), but if this worries you, perform the conversion yourself. If used on the plaintext LDAP port this option will trigger a STARTTLS operation to wrap the communication socket automatically on bind, as this authentication approach requires TLS.
+
+The `-no-password` option can be used when attempting to logon as a user with an emtpy password set. You need to specify the username in NTLM format for this to work - the ldap3 module requires that some password be specified for all non anonymous binds, so the tool auto-sets a blank NT hash in this case. It seems to work.
 
 Connect without specifying any authentication details for anonymous access to get some basic server information (and perhaps more if the server is misconfigured).
 
-The `ssl` option is available to use SSL for the LDAP connection for servers that require this.
+The `ssl` option is available to use SSL for the LDAP connection for servers that require this, which will connect to the secure LDAP port (636 by default) , and there is also a `start_tls` option for upgrading to a TLS connection on the plain text port (389 by default). The `ssl_protocol` option allows specification of a particular protocol version if desired.
 
 
 # Information collected
