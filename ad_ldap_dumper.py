@@ -1119,7 +1119,10 @@ class AdDumper:
         return info
 
     def whoami(self) -> str:
-        return self.connection.extend.standard.who_am_i()
+        try:
+            return self.connection.extend.standard.who_am_i()
+        except Exception as e:
+            return f'Exception determining connected user: {str(e)}'
 
 
     def _configure_query(self, method_name, query, attributes):
