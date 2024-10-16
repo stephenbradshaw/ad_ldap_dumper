@@ -17,7 +17,7 @@ This tool depends on ldap3 and impacket Python modules to work. For kerberos you
 
 You can authenticate using either NTLM (password or pass the hash), simple bind, Kerberos, ADCS certificates or anonymous.
 
-Provide the username (`-u USERNAME, --username USERNAME`) in the `DOMAIN\username` format for NTLM or as `username@domain.com` for simple bind. Provide the `LMHASH:NTHASH` hash in place of a password if you wish to use this. `:NTHASH` works too if you dont have a LM hash. You can either specify a password with `-password` or you will get prompted for one if you have attempted an authentication method that requires one.
+Provide the username (`-u USERNAME, --username USERNAME`) in the `DOMAIN\username` format for NTLM or as `username@domain.com` for simple bind. Provide the `LMHASH:NTHASH` hash in place of a password if you wish to use this. `:NTHASH` works too if you dont have a LM hash. you can either specify a password with `-password` or you will get prompted for one if you have attempted an authentication method that requires one.
 
 Use `-k` for Kerberos authentication. On *nix a ccache ticket cache must exist and be referenced by the `KRB5CCNAME` environment variable. Similar to the way Kerberos authentication works for Impacket. I havent tested this on Windows. You will need to provide the domain controller to connect to (`-d` option) as a domain name for this to work. This can work without DNS if you use your host file, but it will be finicky when it comes to case. Try and match the servers SPN.  You might also need to specify a realm (e.g. short domain name) and a `-dc-ip` with those options. Best results usually come from using upper case for the realm.
 
@@ -27,7 +27,7 @@ The `-no-password` option can be used when attempting to logon as a user with an
 
 Connect without specifying any authentication details for anonymous access to get some basic server information (and perhaps more if the server is misconfigured).
 
-The `ssl` option is available to use SSL for the LDAP connection for servers that require this, which will connect to the secure LDAP port (636 by default) , and there is also a `start_tls` option for upgrading to a TLS connection on the plain text port (389 by default). The `ssl_protocol` option allows specification of a particular protocol version if desired.
+The `ssl` option is available to use SSL for the LDAP connection for servers that require this, which will connect to the secure LDAP port (636 by default) , and there is also a `start_tls` option for upgrading to a TLS connection on the plain text port (389 by default). The `ssl_protocol` option allows specification of a particular protocol version if required
 
 
 # Information collected

@@ -163,7 +163,8 @@ OBJECT_TYPES = {
     'd15ef7d8-f226-46db-ae79-b34e560bd12c': 'ms-PKI-Enrollment-Flag',
     '0e10c968-78fb-11d2-90d4-00c04f79dc55': 'Certificate-Enrollment',
     'a05b8cc2-17bc-4802-a710-e7c15ab866a2': 'Certificate-AutoEnrollment',
-    'e5209ca2-3bba-11d2-90cc-00c04fd91ab1': 'PKI-Certificate-Template'
+    'e5209ca2-3bba-11d2-90cc-00c04fd91ab1': 'PKI-Certificate-Template',
+    '00000000-0000-0000-0000-000000000000': 'AllProperties'
 
 }
 
@@ -1404,7 +1405,7 @@ class AdDumper:
                 if 'GENERIC_ALL' in dacl['Privs']:
                     # check for laps
                     if (objectClass.lower() == 'computer' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and 'ms-Mcs-AdmPwdExpirationTime' in entry 
-                    and dacl['ControlObjectType'].lower() == 'ms-mcs-admpwd'):
+                    and dacl['ControlObjectType'].lower() in ['ms-mcs-admpwd', 'allproperties']):
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'ReadLAPSPassword', inherited(dacl)))
                     else:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericAll', inherited(dacl)))
@@ -1446,47 +1447,47 @@ class AdDumper:
                     
 
                 if ('ADS_RIGHT_DS_WRITE_PROP' in dacl['Privs'] or GenericWrite) and 'ACE_OBJECT_TYPE_PRESENT' in dacl['Ace_Data_Flags']:
-                    if objectClass.lower() == 'group' and dacl['ControlObjectType'] == 'Member':
+                    if objectClass.lower() == 'group' and dacl['ControlObjectType'] in ['Member', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddMember', inherited(dacl)))
-                    elif objectClass.lower() == 'computer' and dacl['ControlObjectType'] == 'ms-DS-Allowed-To-Act-On-Behalf-Of-Other-Identity':
+                    elif objectClass.lower() == 'computer' and dacl['ControlObjectType'] in ['ms-DS-Allowed-To-Act-On-Behalf-Of-Other-Identity', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddAllowedToAct', inherited(dacl)))
-                    elif objectClass.lower() == 'computer' and dacl['ControlObjectType'] == 'User-Account-Restrictions':
+                    elif objectClass.lower() == 'computer' and dacl['ControlObjectType'] in ['User-Account-Restrictions', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WriteAccountRestrictions', inherited(dacl)))
-                    elif objectClass.lower() in ['computer', 'user', 'ms-ds-group-managed-service-account'] and dacl['ControlObjectType'] == 'ms-DS-Key-Credential-Link':
+                    elif objectClass.lower() in ['computer', 'user', 'ms-ds-group-managed-service-account'] and dacl['ControlObjectType'] in ['ms-DS-Key-Credential-Link', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddKeyCredentialLink', inherited(dacl)))
-                    elif objectClass.lower() == 'user' and dacl['ControlObjectType'] == 'Service-Principal-Name':
+                    elif objectClass.lower() == 'user' and dacl['ControlObjectType'] in ['Service-Principal-Name', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WriteSPN', inherited(dacl)))
-                    elif objectClass.lower() == 'pki-certificate-template' and dacl['ControlObjectType'] == 'ms-PKI-Enrollment-Flag':
+                    elif objectClass.lower() == 'pki-certificate-template' and dacl['ControlObjectType'] in ['ms-PKI-Enrollment-Flag', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WritePKIEnrollmentFlag', inherited(dacl)))
-                    elif objectClass.lower() == 'pki-certificate-template' and dacl['ControlObjectType'] == 'ms-PKI-Certificate-Name-Flag':
+                    elif objectClass.lower() == 'pki-certificate-template' and dacl['ControlObjectType'] in ['ms-PKI-Certificate-Name-Flag', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'WritePKINameFlag', inherited(dacl)))
 
 
                 if ('ADS_RIGHT_DS_SELF' in dacl['Privs'] and objectClass.lower() == 'group' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', [])
-                and dacl['ControlObjectType'] == 'Member'):
+                and dacl['ControlObjectType'] in ['Member', 'AllProperties']):
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'AddSelf', inherited(dacl)))
                     
                 if ('ADS_RIGHT_DS_READ_PROP' in dacl['Privs'] and objectClass.lower() == 'computer' and 
                 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and 'ms-Mcs-AdmPwdExpirationTime' in entry and 
-                dacl['ControlObjectType'].lower() == 'ms-mcs-admpwd'):
+                dacl['ControlObjectType'].lower() in ['ms-mcs-admpwd', 'allproperties']):
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'ReadLAPSPassword', inherited(dacl)))
 
                 if 'ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs']:
-                    if objectClass.lower() == 'user' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] == 'User-Force-Change-Password':
+                    if objectClass.lower() == 'user' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] in ['User-Force-Change-Password', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'ForceChangePassword', inherited(dacl)))
 
                     if objectClass.lower() == 'domain' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []):
-                        if dacl['ControlObjectType'] == 'DS-Replication-Get-Changes':
+                        if dacl['ControlObjectType'] in ['DS-Replication-Get-Changes', 'AllProperties']:
                             out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GetChanges', inherited(dacl)))
-                        if dacl['ControlObjectType'] == 'DS-Replication-Get-Changes-All':
+                        if dacl['ControlObjectType'] in ['DS-Replication-Get-Changes-All', 'AllProperties']:
                             out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GetChangesAll', inherited(dacl)))
-                        if dacl['ControlObjectType'] == 'DS-Replication-Get-Changes-In-Filtered-Set':
+                        if dacl['ControlObjectType'] in ['DS-Replication-Get-Changes-In-Filtered-Set', 'AllProperties']:
                             out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GetChangesInFilteredSet', inherited(dacl)))
                     
-                    if objectClass.lower() == 'pki-enrollment-service' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] == 'Certificate-Enrollment':
+                    if objectClass.lower() == 'pki-enrollment-service' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] in ['Certificate-Enrollment', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'Enroll', inherited(dacl)))
 
-                    if objectClass.lower() == 'pki-certificate-template' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] == 'Certificate-Enrollment':
+                    if objectClass.lower() == 'pki-certificate-template' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] in ['Certificate-Enrollment', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'Enroll', inherited(dacl)))
                     
 
