@@ -1429,10 +1429,9 @@ class AdDumper:
                 
                 # AllExtendedRights
                 if ('ADS_RIGHT_DS_CONTROL_ACCESS' in dacl['Privs'] and objectClass.lower() in ['user', 'domain', 'computer', 'pki-certificate-template']
-                and ('ACE_OBJECT_TYPE_PRESENT' not in dacl.get('Ace_Data_Flags', []))):
+                and (('ACE_OBJECT_TYPE_PRESENT' not in dacl.get('Ace_Data_Flags', [])) or (dacl['ControlObjectType'] == 'AllProperties')) ):
                     AllExtendedRights = True
-               
-               
+
 
                 if GenericWrite:
                     out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GenericWrite', inherited(dacl)))
