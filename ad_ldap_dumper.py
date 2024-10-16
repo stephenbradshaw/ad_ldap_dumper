@@ -161,8 +161,6 @@ OBJECT_TYPES = {
     '4c164200-20c0-11d0-a768-00aa006e0529': 'User-Account-Restrictions',
     'ea1dddc4-60ff-416e-8cc0-17cee534bce7': 'ms-PKI-Certificate-Name-Flag',
     'd15ef7d8-f226-46db-ae79-b34e560bd12c': 'ms-PKI-Enrollment-Flag',
-    '0e10c968-78fb-11d2-90d4-00c04f79dc55': 'Certificate-Enrollment',
-    'a05b8cc2-17bc-4802-a710-e7c15ab866a2': 'Certificate-AutoEnrollment',
     'e5209ca2-3bba-11d2-90cc-00c04fd91ab1': 'PKI-Certificate-Template',
     '00000000-0000-0000-0000-000000000000': 'AllProperties'
 
@@ -1483,10 +1481,10 @@ class AdDumper:
                         if dacl['ControlObjectType'] in ['DS-Replication-Get-Changes-In-Filtered-Set', 'AllProperties']:
                             out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'GetChangesInFilteredSet', inherited(dacl)))
                     
-                    if objectClass.lower() == 'pki-enrollment-service' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] in ['Certificate-Enrollment', 'AllProperties']:
+                    if objectClass.lower() == 'pki-enrollment-service' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] in ['Certificate-Enrollment', 'Certificate-AutoEnrollment', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'Enroll', inherited(dacl)))
 
-                    if objectClass.lower() == 'pki-certificate-template' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] in ['Certificate-Enrollment', 'AllProperties']:
+                    if objectClass.lower() == 'pki-certificate-template' and 'ACE_OBJECT_TYPE_PRESENT' in dacl.get('Ace_Data_Flags', []) and dacl['ControlObjectType'] in ['Certificate-Enrollment', 'Certificate-AutoEnrollment', 'AllProperties']:
                         out.append(build_hb_acl(dacl['Sid'], self._ft(dacl['Sid']), 'Enroll', inherited(dacl)))
                     
 
