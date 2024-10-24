@@ -1105,7 +1105,7 @@ class AdDumper:
         method_name = sys._getframe(0).f_code.co_name.split('_', 1)[1]
         query, attributes = self._configure_query(method_name, query, attributes)
         gen = self.connection.extend.standard.paged_search(self.root, query, controls=self.controls, attributes=attributes, paged_size=self.paged_size, generator=True)
-        data = data = self.parse_records(gen)
+        data = self.parse_records(gen)
         self.update_sidlt(data)
         return data
         
