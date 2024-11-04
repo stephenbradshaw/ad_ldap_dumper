@@ -1729,7 +1729,7 @@ class AdDumper:
             'subjectrequireemail': 'CT_FLAG_SUBJECT_REQUIRE_EMAIL' in self._fp(entry, 'msPKI-Certificate-Name-FlagFlags', []),
             'ekus': eku, 
             'certificateapplicationpolicy': ap, 
-            'authorizedsignatures': self._fp(entry, 'msPKI-RA-Signature'), 
+            'authorizedsignatures': self._fp(entry, 'msPKI-RA-Signature', 0), 
             'applicationpolicies': self._fp(entry, 'msPKI-RA-Application-Policies', []), 
             'issuancepolicies': self._fp(entry, 'msPKI-RA-Policies', []), 
             'effectiveekus':  effectiveekus, 
