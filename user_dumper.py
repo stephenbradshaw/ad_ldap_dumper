@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 
 from ad_ldap_dumper import *
+import csv 
+import sys 
+csv.field_size_limit(sys.maxsize)
+
+
 
 
 def command_line():
@@ -16,6 +21,8 @@ def command_line():
     output_arg_group = parser.add_argument_group('Output')
     output_arg_group.add_argument('-loglevel', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='INFO', help='Set logging level')
     output_arg_group.add_argument('-output', type=str,  help='Output filename. An automatically generated name will be used if not provided.')
+    output_arg_group.add_argument('-output_type', type=str, choices=['csv', 'json'], default='csv',  help='Output type. ')
+    
 
     auth_arg_group = parser.add_argument_group('Authentication')
     agroup = auth_arg_group.add_mutually_exclusive_group()
@@ -41,7 +48,7 @@ def command_line():
 
     
     dumper = AdDumper(args.domain_controller, username=args.username, password=password, ssl=args.ssl, port=args.port, attributes=attributes, logger=logger, query_config=args.query_config) 
-    outputfile = args.output if args.output else '{}_{}_User_Dump.json'.format(dumper.generate_timestamp(), args.domain_controller)
+    outputfile = args.output if args.output else f'{dumper.generate_timestamp()}_{args.domain_controller}_User_Dump.{args.output_type}'
 
     dumper.connect()
     data = dumper.query(methods=['users'])
@@ -52,12 +59,17 @@ def command_line():
         all_attributes = []
         for entry in data.get('users', []):
             all_attributes += list(entry.keys())
-        out_attributes = list(set(all_attributes))
+        out_attributes = sorted(set(all_attributes))
 
     process_field = lambda x: x[0] if isinstance(x, list) and len(x) == 1 else '' if x == [] else x
     out_filtered = [{b: process_field(a[b]) for b in out_attributes if b in a} for a in data.get('users', [])]
 
-    open(outputfile, 'w').write(json.dumps(out_filtered, indent=4))
+    if args.output_type == 'csv':
+        cwriter = csv.DictWriter(open(outputfile, 'w', newline=''), fieldnames=out_attributes)
+        cwriter.writeheader()
+        cwriter.writerows(out_filtered)
+    else:
+        open(outputfile, 'w').write(json.dumps(out_filtered, indent=4))
 
 
 
